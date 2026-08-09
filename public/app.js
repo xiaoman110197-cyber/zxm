@@ -1,4 +1,5 @@
 const $ = (id) => document.getElementById(id);
+const PRIORITIES = ['P0', 'P1', 'P2'];
 const state = { diagnosis: { id: crypto.randomUUID(), answers: {}, evidence: [], findings: [], documents: [] }, turn: 0, originalFile: null, audit: null };
 
 function addBubble(text, who) {
@@ -19,7 +20,8 @@ function renderFindings(findings) {
     const card = document.createElement('article');
     card.className = 'finding';
     const evidence = Array.isArray(finding.evidence) ? finding.evidence.join('；') : '';
-    card.innerHTML = `<span class="badge">${finding.priority} · ${findingLabel(finding.status)}</span><h3></h3><p><strong>证据：</strong></p><p><strong>影响：</strong></p><p><strong>行动：</strong></p><p><strong>验证指标：</strong></p>`;
+    const priority = PRIORITIES.includes(finding.priority) ? finding.priority : 'P2';
+    card.innerHTML = `<span class="badge">${priority} · ${findingLabel(finding.status)}</span><h3></h3><p><strong>证据：</strong></p><p><strong>影响：</strong></p><p><strong>行动：</strong></p><p><strong>验证指标：</strong></p>`;
     card.querySelector('h3').textContent = finding.title || '经营问题';
     const ps = card.querySelectorAll('p');
     ps[0].append(document.createTextNode(evidence || '暂无直接证据'));
