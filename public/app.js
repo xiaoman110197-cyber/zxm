@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const PRIORITIES = ['P0', 'P1', 'P2'];
-const state = { diagnosis: { id: crypto.randomUUID(), answers: {}, evidence: [], findings: [], documents: [] }, turn: 0, originalFile: null, audit: null };
+const state = { diagnosis: { id: crypto.randomUUID(), answers: {}, evidence: [], findings: [], documents: [] }, turn: 0, originalFile: null, originalBase64: '', audit: null };
 
 function addBubble(text, who) {
   const node = document.createElement('div');
@@ -11,6 +11,10 @@ function addBubble(text, who) {
 
 function findingLabel(status) {
   return ({ confirmed: '事实', probable: '高概率', hypothesis: '待验证' })[status] || '待验证';
+}
+
+function updateDownloadState() {
+  $('download-excel').disabled = !(state.originalFile && state.originalBase64 && state.diagnosis.findings.length);
 }
 
 function renderFindings(findings) {
@@ -30,6 +34,7 @@ function renderFindings(findings) {
     ps[3].append(document.createTextNode(finding.metric || '待定义'));
     root.append(card);
   }
+  updateDownloadState();
 }
 
 async function postJson(url, body) {
@@ -82,15 +87,53 @@ async function analyzeWorkbook(file) {
     const contentBase64 = await fileToBase64(file);
     const result = await postJson('/api/analyze-file', { file: { name: file.name, contentBase64 } });
     state.originalFile = file;
+    state.originalBase64 = contentBase64;
     state.audit = result.audit;
     state.diagnosis.documents = [result.document];
     state.diagnosis.evidence.push(`excel_audit:${JSON.stringify(result.summary)}`);
     $('file-status').textContent = `已读取 ${result.summary.sheetCount} 个 Sheet；发现 ${result.summary.errorCount} 个数据错误、${result.summary.anomalyCount} 个经营异常。`;
     if (result.audit.errors?.length) $('file-errors').textContent = `数据错误：${result.audit.errors.map(e => e.reason || e.type).join('；')}`;
-    $('download-excel').disabled = !(state.originalFile && state.diagnosis.findings.length);
+    updateDownloadState();
   } catch (error) {
+    state.originalFile = null;
+    state.originalBase64 = '';
+    state.audit = null;
+    updateDownloadState();
     $('file-status').textContent = '';
     $('file-errors').textContent = `文件分析失败：${error.message}`;
+  }
+}
+
+function base64ToBlob(contentBase64, mimeType) {
+  const binary = atob(contentBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
+
+async function downloadReport() {
+  if (!state.originalFile || !state.originalBase64 || !state.diagnosis.findings.length) return;
+  $('request-error').textContent = '';
+  $('download-excel').disabled = true;
+  try {
+    const result = await postJson('/api/report', {
+      file: { name: state.originalFile.name, contentBase64: state.originalBase64 },
+      audit: state.audit || { errors: [], anomalies: [], metrics: {} },
+      findings: state.diagnosis.findings
+    });
+    const blob = base64ToBlob(result.contentBase64, result.mimeType);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = result.filename || '经营诊断报告.xlsx';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    $('request-error').textContent = `报告下载失败：${error.message}`;
+  } finally {
+    updateDownloadState();
   }
 }
 
@@ -102,6 +145,4 @@ $('workbook').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
   if (file) analyzeWorkbook(file);
 });
-$('download-excel').addEventListener('click', () => {
-  $('request-error').textContent = 'Excel 报告生成接口尚未接入，当前不会伪造下载文件。';
-});
+$('download-excel').addEventListener('click', downloadReport);
