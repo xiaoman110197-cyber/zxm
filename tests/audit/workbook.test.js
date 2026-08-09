@@ -7,9 +7,9 @@ import { auditWorkbook } from '../../src/audit/rules.js';
 function buildWorkbookBuffer() {
   const wb = XLSX.utils.book_new();
   const orders = [
-    {订单号:'A001', 营业额:100, 客户:'张三'},
-    {订单号:'A002', 营业额:200, 客户:''},
-    {订单号:'A002', 营业额:200, 客户:''}
+    {订单号:'A001', 营业额:100, 客户:'张三', 备注:''},
+    {订单号:'A002', 营业额:200, 客户:'', 备注:''},
+    {订单号:'A002', 营业额:200, 客户:'', 备注:''}
   ];
   const summary = [{指标:'营业额', 数值:999}];
   const costs = [{项目:'原料', 成本:120},{项目:'平台', 成本:30}];
@@ -25,11 +25,16 @@ test('parses every sheet in a workbook', () => {
   assert.equal(parsed.sheets[0].rows.length, 3);
 });
 
-test('detects duplicate records and missing values as data errors', () => {
-  const parsed = parseWorkbook(buildWorkbookBuffer());
-  const audit = auditWorkbook(parsed);
+test('does not report ordinary optional blank cells as missing-value errors', () => {
+  const audit = auditWorkbook(parseWorkbook(buildWorkbookBuffer()));
   assert.ok(audit.errors.some(e => e.type === 'duplicate_record' && e.sheet === '订单明细'));
-  assert.ok(audit.errors.some(e => e.type === 'missing_value' && e.sheet === '订单明细' && e.field === '客户'));
+  assert.equal(audit.errors.some(e => e.type === 'missing_value' && ['客户','备注'].includes(e.field)), false);
+});
+
+test('reports a missing critical business field on a materially populated row', () => {
+  const workbook = { sheets: [{ name:'订单明细', headers:['订单号','营业额','备注'], rows:[{订单号:'A003', 营业额:'', 备注:'已成交'}] }] };
+  const audit = auditWorkbook(workbook);
+  assert.ok(audit.errors.some(e => e.type === 'missing_value' && e.field === '营业额'));
 });
 
 test('detects cross-sheet revenue mismatch without classifying it as a business anomaly', () => {
