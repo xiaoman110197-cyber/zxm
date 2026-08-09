@@ -26,10 +26,12 @@ test('business findings and file errors have separate display regions', () => {
   assert.match(js, /P0|P1|P2/);
 });
 
-test('report UI exposes evidence and an Excel download action', () => {
+test('report UI exposes evidence and a real Excel report API download action', () => {
   assert.match(html, /证据/);
   assert.match(html, /下载.*Excel|Excel.*下载/);
   assert.match(js, /evidence/);
+  assert.match(js, /\/api\/report/);
+  assert.doesNotMatch(js, /报告生成接口尚未接入/);
 });
 
 test('layout is mobile-first and avoids fixed desktop width', () => {
