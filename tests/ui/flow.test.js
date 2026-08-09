@@ -13,10 +13,18 @@ test('mobile flow starts from free description instead of a fixed questionnaire'
   assert.match(js, /\/api\/diagnosis/);
 });
 
-test('workbook upload is optional and calls analyze-file only when selected', () => {
+test('business-material upload is optional and exposes five mainstream categories', () => {
+  assert.match(html, /上传经营资料/);
   assert.match(html, /type="file"/);
   assert.match(html, /可选|选填/);
+  for (const extension of ['.xlsx','.xls','.csv','.pdf','.docx','.jpg','.jpeg','.png']) assert.match(html, new RegExp(extension.replace('.', '\\.')));
   assert.match(js, /\/api\/analyze-file/);
+});
+
+test('file issue display groups repeated errors instead of dumping every code', () => {
+  assert.match(js, /summarizeFileIssues/);
+  assert.match(js, /Map\(/);
+  assert.doesNotMatch(js, /audit\.errors\.map\([^\n]+join/);
 });
 
 test('business findings and file errors have separate display regions', () => {
@@ -32,6 +40,10 @@ test('report UI exposes evidence and a real Excel report API download action', (
   assert.match(js, /evidence/);
   assert.match(js, /\/api\/report/);
   assert.doesNotMatch(js, /报告生成接口尚未接入/);
+});
+
+test('non-Excel uploads do not enable Excel report reconstruction', () => {
+  assert.match(js, /document\.type\s*===\s*['"]excel['"]/);
 });
 
 test('layout is mobile-first and avoids fixed desktop width', () => {
