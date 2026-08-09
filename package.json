@@ -3,7 +3,14 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
-  "scripts": {"test": "node --test"},
-  "dependencies": {"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"},
-  "engines": {"node": ">=20"}
+  "scripts": {
+    "test": "node --test",
+    "build": "rm -rf dist && cp -R public dist"
+  },
+  "dependencies": {
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }
