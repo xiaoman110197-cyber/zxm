@@ -50,6 +50,14 @@ const RESPONSE_SCHEMA = {
   }
 };
 
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function logDiagnosisError(stage, error) {
+  console.error('[diagnosis]', stage, errorMessage(error));
+}
+
 // Kept for compatibility with existing tests and callers; new runtime routing uses providers below.
 export async function callOpenAiDiagnosis(diagnosis, { apiKey, fetchImpl = fetch, model = process.env.OPENAI_MODEL || 'gpt-5-mini' } = {}) {
   const response = await fetchImpl('https://api.openai.com/v1/responses', {
@@ -107,7 +115,8 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
       const ai = deps.ai || ((value) => callOpenAiDiagnosis(value, { apiKey }));
       return res.status(200).json(validateAiResult(await ai(diagnosis)));
     } catch (error) {
-      return res.status(502).json({ error:'AI diagnosis failed', detail:error instanceof Error ? error.message : String(error) });
+      logDiagnosisError('legacy-provider', error);
+      return res.status(502).json({ error:'AI diagnosis failed', detail:errorMessage(error) });
     }
   }
 
@@ -130,7 +139,8 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
     }
     return res.status(200).json(result);
   } catch (error) {
-    return res.status(502).json({ error:'AI diagnosis failed', detail:error instanceof Error ? error.message : String(error) });
+    logDiagnosisError(`runtime-provider:${primaryProvider?.name || 'unknown'}`, error);
+    return res.status(502).json({ error:'AI diagnosis failed', detail:errorMessage(error) });
   }
 }
 
