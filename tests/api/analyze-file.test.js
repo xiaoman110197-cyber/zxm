@@ -38,6 +38,15 @@ test('file api analyzes all Excel sheets and returns deterministic audit', async
   assert.equal(res.body.summary.sheetCount, 2);
 });
 
+test('file api analyzes CSV through the same normalized endpoint', async () => {
+  const res = mockRes();
+  const contentBase64 = Buffer.from('订单号,营业额\nA001,100\nA002,200', 'utf8').toString('base64');
+  await handleAnalyzeFileRequest({ method:'POST', body:{ file:{ name:'订单.csv', contentBase64 } } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.document.type, 'csv');
+  assert.equal(res.body.summary.sheetCount, 1);
+});
+
 test('file api returns understandable error for corrupt Excel', async () => {
   const res = mockRes();
   await handleAnalyzeFileRequest({ method:'POST', body:{ file:{ name:'坏文件.xlsx', contentBase64:Buffer.from('not an xlsx').toString('base64') } } }, res);
