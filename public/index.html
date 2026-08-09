@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>老板经营问诊器</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <span class="eyebrow">AI + FDE 经营诊断</span>
+      <h1>老板经营问诊器</h1>
+      <p>先说你现在最头疼的经营问题。系统会根据你的回答继续追问，不使用固定题序。</p>
+    </header>
+
+    <section class="card" id="conversation-card">
+      <div id="conversation" class="conversation" aria-live="polite"></div>
+      <label for="owner-input">经营情况 / 经营问题</label>
+      <textarea id="owner-input" rows="5" placeholder="例如：最近两个月营业额下降，但客流看起来没少，我不知道问题出在哪里。"></textarea>
+      <div class="actions"><button id="send" class="primary">开始诊断</button></div>
+      <p id="request-error" class="error" role="alert"></p>
+    </section>
+
+    <section class="card">
+      <div class="section-head"><div><span class="eyebrow">经营数据</span><h2>上传 Excel（可选）</h2></div><span class="optional">选填</span></div>
+      <p class="muted">有营业额、订单、成本等 Excel 时可上传。系统会把数据错误和经营异常分开，不会自动改原文件。</p>
+      <input id="workbook" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
+      <div id="file-status" class="status"></div>
+      <div id="file-errors" class="file-errors" aria-live="polite"></div>
+    </section>
+
+    <section class="card report" id="report">
+      <div class="section-head"><div><span class="eyebrow">诊断报告</span><h2>P0 / P1 / P2</h2></div></div>
+      <div class="legend"><span>事实：confirmed</span><span>高概率：probable</span><span>待验证：hypothesis</span></div>
+      <div id="findings" aria-live="polite"><p class="muted">完成问诊后，这里会显示经营问题、证据、影响、行动和验证指标。</p></div>
+      <div class="download-row"><button id="download-excel" disabled>下载 Excel 报告</button></div>
+      <p class="muted small">下载功能将在形成完整报告且存在原始 Excel 时启用；不会覆盖你上传的原文件。</p>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
