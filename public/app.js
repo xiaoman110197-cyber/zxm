@@ -80,24 +80,70 @@ function fileToBase64(file) {
   });
 }
 
-async function analyzeWorkbook(file) {
+function fileTypeLabel(type) {
+  return ({ excel:'Excel', csv:'CSV', pdf:'PDF', docx:'Word', image:'图片' })[type] || '文件';
+}
+
+function summarizeFileIssues(result) {
+  const counts = new Map();
+  const errors = Array.isArray(result.audit?.errors) ? result.audit.errors : [];
+  const labels = {
+    missing_value: '关键字段缺失',
+    duplicate: '重复记录',
+    duplicate_record: '重复记录',
+    cross_sheet_mismatch: '跨表合计不一致'
+  };
+  for (const issue of errors) {
+    const label = issue.reason || labels[issue.type] || issue.type || '数据问题';
+    const scope = [issue.sheet, issue.field].filter(Boolean).join(' / ');
+    const key = scope ? `${label}（${scope}）` : label;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+
+  const parts = [];
+  for (const [label, count] of counts) parts.push(count > 1 ? `${label} × ${count}` : label);
+  const warnings = Array.isArray(result.document?.warnings) ? result.document.warnings : [];
+  for (const warning of warnings) parts.push(`识别提示：${warning}`);
+  return parts.slice(0, 8).join('；');
+}
+
+function fileStatusText(result) {
+  const summary = result.summary || {};
+  const type = fileTypeLabel(result.document?.type);
+  const issueText = `数据质量问题 ${summary.errorCount || 0} 个，经营异常 ${summary.anomalyCount || 0} 个`;
+  if (result.document?.structured) {
+    return `已读取 ${type}：${summary.sheetCount || 0} 个表，${summary.rowCount || 0} 行数据；${issueText}。`;
+  }
+  const confidence = typeof summary.confidence === 'number' ? `，识别置信度 ${Math.round(summary.confidence * 100)}%` : '';
+  return `已读取 ${type}：提取 ${summary.textLength || 0} 个字符${confidence}；${issueText}。`;
+}
+
+async function analyzeBusinessFile(file) {
   $('file-errors').textContent = '';
   $('file-status').textContent = `正在分析 ${file.name}…`;
   try {
     const contentBase64 = await fileToBase64(file);
     const result = await postJson('/api/analyze-file', { file: { name: file.name, contentBase64 } });
-    state.originalFile = file;
-    state.originalBase64 = contentBase64;
+
+    if (result.document.type === 'excel') {
+      state.originalFile = file;
+      state.originalBase64 = contentBase64;
+    } else {
+      state.originalFile = null;
+      state.originalBase64 = '';
+    }
+
     state.audit = result.audit;
     state.diagnosis.documents = [result.document];
-    state.diagnosis.evidence.push(`excel_audit:${JSON.stringify(result.summary)}`);
-    $('file-status').textContent = `已读取 ${result.summary.sheetCount} 个 Sheet；发现 ${result.summary.errorCount} 个数据错误、${result.summary.anomalyCount} 个经营异常。`;
-    if (result.audit.errors?.length) $('file-errors').textContent = `数据错误：${result.audit.errors.map(e => e.reason || e.type).join('；')}`;
+    state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`);
+    $('file-status').textContent = fileStatusText(result);
+    $('file-errors').textContent = summarizeFileIssues(result);
     updateDownloadState();
   } catch (error) {
     state.originalFile = null;
     state.originalBase64 = '';
     state.audit = null;
+    state.diagnosis.documents = [];
     updateDownloadState();
     $('file-status').textContent = '';
     $('file-errors').textContent = `文件分析失败：${error.message}`;
@@ -143,6 +189,6 @@ $('owner-input').addEventListener('keydown', (event) => {
 });
 $('workbook').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
-  if (file) analyzeWorkbook(file);
+  if (file) analyzeBusinessFile(file);
 });
 $('download-excel').addEventListener('click', downloadReport);
