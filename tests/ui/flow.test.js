@@ -21,6 +21,12 @@ test('business-material upload is optional and exposes five mainstream categorie
   assert.match(js, /\/api\/analyze-file/);
 });
 
+test('current Base64 upload transport blocks files above 3 MB before the request', () => {
+  assert.match(js, /MAX_FILE_BYTES\s*=\s*3\s*\*\s*1024\s*\*\s*1024/);
+  assert.match(js, /file\.size\s*>\s*MAX_FILE_BYTES/);
+  assert.match(js, /3\s*MB/);
+});
+
 test('file issue display groups repeated errors instead of dumping every code', () => {
   assert.match(js, /summarizeFileIssues/);
   assert.match(js, /Map\(/);
