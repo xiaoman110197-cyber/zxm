@@ -1,0 +1,106 @@
+const FINDING_STATUSES = new Set(['confirmed', 'probable', 'hypothesis']);
+const PRIORITIES = new Set(['P0', 'P1', 'P2']);
+
+export function validateAiFinding(finding) {
+  if (!finding || typeof finding !== 'object') throw new TypeError('finding is required');
+  if (!FINDING_STATUSES.has(finding.status)) throw new TypeError('invalid finding status');
+  if (!PRIORITIES.has(finding.priority)) throw new TypeError('invalid finding priority');
+  if (!Array.isArray(finding.evidence) || finding.evidence.length === 0) throw new TypeError('finding requires evidence');
+  if (typeof finding.confidence !== 'number' || finding.confidence < 0 || finding.confidence > 1) throw new TypeError('invalid confidence');
+  for (const key of ['title', 'impact', 'action', 'metric']) {
+    if (typeof finding[key] !== 'string' || finding[key].trim() === '') throw new TypeError(`finding requires ${key}`);
+  }
+  return finding;
+}
+
+function validateAiResult(result) {
+  if (!result || !['question', 'finding'].includes(result.mode)) throw new TypeError('invalid AI result mode');
+  if (result.mode === 'question') {
+    if (!result.question || typeof result.question.question !== 'string' || typeof result.question.key !== 'string') {
+      throw new TypeError('question result is invalid');
+    }
+    return result;
+  }
+  if (!Array.isArray(result.findings)) throw new TypeError('finding result requires findings');
+  result.findings.forEach(validateAiFinding);
+  return result;
+}
+
+const RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['mode', 'question', 'findings'],
+  properties: {
+    mode: { type: 'string', enum: ['question', 'finding'] },
+    question: {
+      anyOf: [
+        { type: 'null' },
+        {
+          type: 'object', additionalProperties: false, required: ['key', 'question', 'reason'],
+          properties: { key: { type: 'string' }, question: { type: 'string' }, reason: { type: 'string' } }
+        }
+      ]
+    },
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['title', 'status', 'priority', 'evidence', 'confidence', 'impact', 'action', 'metric'],
+        properties: {
+          title: { type: 'string' },
+          status: { type: 'string', enum: ['confirmed', 'probable', 'hypothesis'] },
+          priority: { type: 'string', enum: ['P0', 'P1', 'P2'] },
+          evidence: { type: 'array', minItems: 1, items: { type: 'string' } },
+          confidence: { type: 'number', minimum: 0, maximum: 1 },
+          impact: { type: 'string' }, action: { type: 'string' }, metric: { type: 'string' }
+        }
+      }
+    }
+  }
+};
+
+export async function callOpenAiDiagnosis(diagnosis, { apiKey, fetchImpl = fetch, model = process.env.OPENAI_MODEL || 'gpt-5-mini' } = {}) {
+  const response = await fetchImpl('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      instructions: [
+        '你是经营诊断助手。根据老板回答、结构化数据审计结果和证据决定下一步。',
+        '信息不足时只追问一个最有信息价值的问题；证据足够时输出结构化 findings。',
+        '不得把猜测写成事实。confirmed 必须有直接确定性证据；probable 是多证据但仍需验证；hypothesis 是弱证据假设。',
+        'P0 只用于严重且证据充分的问题。所有 finding 必须明确证据、影响、行动和验证指标。'
+      ].join('\n'),
+      input: JSON.stringify(diagnosis),
+      text: { format: { type: 'json_schema', name: 'zhenduan_diagnosis', strict: true, schema: RESPONSE_SCHEMA } }
+    })
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`OpenAI request failed (${response.status}): ${detail.slice(0, 300)}`);
+  }
+  const payload = await response.json();
+  if (!payload.output_text) throw new Error('OpenAI response has no output_text');
+  return JSON.parse(payload.output_text);
+}
+
+export async function handleDiagnosisRequest(req, res, deps = {}) {
+  if (req.method && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const diagnosis = req.body?.diagnosis;
+  if (!diagnosis || typeof diagnosis !== 'object' || !diagnosis.id) return res.status(400).json({ error: 'diagnosis is required' });
+
+  const apiKey = deps.apiKey ?? process.env.OPENAI_API_KEY ?? '';
+  if (!apiKey) return res.status(503).json({ error: 'Server is missing OPENAI_API_KEY' });
+
+  try {
+    const ai = deps.ai || ((value) => callOpenAiDiagnosis(value, { apiKey }));
+    const result = validateAiResult(await ai(diagnosis));
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(502).json({ error: 'AI diagnosis failed', detail: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+export default async function handler(req, res) {
+  return handleDiagnosisRequest(req, res);
+}
