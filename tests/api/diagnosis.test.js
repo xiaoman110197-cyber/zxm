@@ -41,3 +41,20 @@ test('diagnosis api returns structured AI result only after validation', async (
   assert.equal(res.body.mode, 'finding');
   assert.equal(res.body.findings[0].priority, 'P1');
 });
+
+test('runtime provider normalizes a shorthand question string into the frontend question contract', async () => {
+  const req = { method: 'POST', body: { diagnosis: { id: 'd1', answers: { owner_turn_1: '最近一直亏损不知道问题在哪里' }, evidence: [], findings: [], documents: [] } } };
+  const res = mockRes();
+  await handleDiagnosisRequest(req, res, {
+    primaryProvider: {
+      name: 'deepseek',
+      diagnose: async () => ({ mode: 'question', question: '最近30天营业额、订单量和客单价分别有什么变化？', reason: '先拆解亏损来自收入端还是成本端' })
+    },
+    reviewerProvider: null
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.mode, 'question');
+  assert.equal(res.body.question.question, '最近30天营业额、订单量和客单价分别有什么变化？');
+  assert.equal(res.body.question.key, 'follow_up');
+  assert.equal(res.body.question.reason, '先拆解亏损来自收入端还是成本端');
+});
