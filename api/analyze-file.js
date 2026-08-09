@@ -1,6 +1,8 @@
 import { auditWorkbook } from '../src/audit/rules.js';
 import { parseBusinessDocument, supportedBusinessDocumentExtensions } from '../src/documents/parse.js';
 
+const MAX_FILE_BYTES = 3 * 1024 * 1024;
+
 function normalizeAudit(audit) {
   return {
     ...audit,
@@ -54,6 +56,9 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
     return res.status(422).json({ error: '文件内容损坏或无法解析' });
   }
   if (!buffer.length) return res.status(422).json({ error: '文件内容为空或无法解析' });
+  if (buffer.length > MAX_FILE_BYTES) {
+    return res.status(413).json({ error: '文件过大：当前版本单个文件最大支持 3 MB' });
+  }
 
   try {
     const parser = deps.parseBusinessDocument || parseBusinessDocument;
