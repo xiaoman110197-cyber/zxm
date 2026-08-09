@@ -47,6 +47,16 @@ test('file api analyzes CSV through the same normalized endpoint', async () => {
   assert.equal(res.body.summary.sheetCount, 1);
 });
 
+test('file api rejects files above the 3 MB raw-file transport limit before parsing', async () => {
+  const res = mockRes();
+  const contentBase64 = Buffer.alloc(3 * 1024 * 1024 + 1, 0x61).toString('base64');
+  await handleAnalyzeFileRequest({ method:'POST', body:{ file:{ name:'大文件.csv', contentBase64 } } }, res, {
+    parseBusinessDocument: async () => { throw new Error('parser should not run'); }
+  });
+  assert.equal(res.statusCode, 413);
+  assert.match(res.body.error, /3\s*MB|过大/);
+});
+
 test('file api returns understandable error for corrupt Excel', async () => {
   const res = mockRes();
   await handleAnalyzeFileRequest({ method:'POST', body:{ file:{ name:'坏文件.xlsx', contentBase64:Buffer.from('not an xlsx').toString('base64') } } }, res);
