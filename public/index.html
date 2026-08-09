@@ -23,9 +23,10 @@
     </section>
 
     <section class="card">
-      <div class="section-head"><div><span class="eyebrow">经营数据</span><h2>上传 Excel（可选）</h2></div><span class="optional">选填</span></div>
-      <p class="muted">有营业额、订单、成本等 Excel 时可上传。系统会把数据错误和经营异常分开，不会自动改原文件。</p>
-      <input id="workbook" type="file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
+      <div class="section-head"><div><span class="eyebrow">经营资料</span><h2>上传经营资料（可选）</h2></div><span class="optional">选填</span></div>
+      <p class="muted">支持 Excel、CSV、PDF、Word 和 JPG/PNG 图片。系统会先识别资料内容，再把数据质量问题与经营异常分开；识别不确定的内容会提示人工确认。</p>
+      <input id="workbook" type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.jpg,.jpeg,.png,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png">
+      <p class="muted small">可上传：.xlsx / .xls / .csv / .pdf / .docx / .jpg / .jpeg / .png</p>
       <div id="file-status" class="status"></div>
       <div id="file-errors" class="file-errors" aria-live="polite"></div>
     </section>
