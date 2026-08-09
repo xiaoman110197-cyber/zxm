@@ -1,5 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const PRIORITIES = ['P0', 'P1', 'P2'];
+const MAX_FILE_BYTES = 3 * 1024 * 1024;
 const state = { diagnosis: { id: crypto.randomUUID(), answers: {}, evidence: [], findings: [], documents: [] }, turn: 0, originalFile: null, originalBase64: '', audit: null };
 
 function addBubble(text, who) {
@@ -118,8 +119,23 @@ function fileStatusText(result) {
   return `已读取 ${type}：提取 ${summary.textLength || 0} 个字符${confidence}；${issueText}。`;
 }
 
+function resetUploadedFileState() {
+  state.originalFile = null;
+  state.originalBase64 = '';
+  state.audit = null;
+  state.diagnosis.documents = [];
+  updateDownloadState();
+}
+
 async function analyzeBusinessFile(file) {
   $('file-errors').textContent = '';
+  if (file.size > MAX_FILE_BYTES) {
+    resetUploadedFileState();
+    $('file-status').textContent = '';
+    $('file-errors').textContent = '文件过大：当前版本单个文件最大支持 3 MB。';
+    return;
+  }
+
   $('file-status').textContent = `正在分析 ${file.name}…`;
   try {
     const contentBase64 = await fileToBase64(file);
@@ -140,11 +156,7 @@ async function analyzeBusinessFile(file) {
     $('file-errors').textContent = summarizeFileIssues(result);
     updateDownloadState();
   } catch (error) {
-    state.originalFile = null;
-    state.originalBase64 = '';
-    state.audit = null;
-    state.diagnosis.documents = [];
-    updateDownloadState();
+    resetUploadedFileState();
     $('file-status').textContent = '';
     $('file-errors').textContent = `文件分析失败：${error.message}`;
   }
