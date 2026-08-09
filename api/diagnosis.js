@@ -16,6 +16,52 @@ export function validateAiFinding(finding) {
   return finding;
 }
 
+function normalizeAiResult(result) {
+  if (!result || typeof result !== 'object' || result.mode !== 'question') return result;
+
+  if (typeof result.question === 'string' && result.question.trim()) {
+    return {
+      ...result,
+      question: {
+        key: typeof result.key === 'string' && result.key.trim() ? result.key : 'follow_up',
+        question: result.question.trim(),
+        reason: typeof result.reason === 'string' ? result.reason : ''
+      },
+      findings: Array.isArray(result.findings) ? result.findings : []
+    };
+  }
+
+  if (result.question && typeof result.question === 'object') {
+    const text = typeof result.question.question === 'string'
+      ? result.question.question
+      : typeof result.question.text === 'string'
+        ? result.question.text
+        : '';
+    if (text.trim()) {
+      return {
+        ...result,
+        question: {
+          ...result.question,
+          key: typeof result.question.key === 'string' && result.question.key.trim()
+            ? result.question.key
+            : typeof result.key === 'string' && result.key.trim()
+              ? result.key
+              : 'follow_up',
+          question: text.trim(),
+          reason: typeof result.question.reason === 'string'
+            ? result.question.reason
+            : typeof result.reason === 'string'
+              ? result.reason
+              : ''
+        },
+        findings: Array.isArray(result.findings) ? result.findings : []
+      };
+    }
+  }
+
+  return result;
+}
+
 function validateAiResult(result) {
   if (!result || !['question', 'finding'].includes(result.mode)) throw new TypeError('invalid AI result mode');
   if (result.mode === 'question') {
@@ -113,7 +159,7 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
     if (!apiKey) return res.status(503).json({ error:'Server is missing OPENAI_API_KEY' });
     try {
       const ai = deps.ai || ((value) => callOpenAiDiagnosis(value, { apiKey }));
-      return res.status(200).json(validateAiResult(await ai(diagnosis)));
+      return res.status(200).json(validateAiResult(normalizeAiResult(await ai(diagnosis))));
     } catch (error) {
       logDiagnosisError('legacy-provider', error);
       return res.status(502).json({ error:'AI diagnosis failed', detail:errorMessage(error) });
@@ -128,7 +174,7 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
   }
 
   try {
-    let result = validateAiResult(await primaryProvider.diagnose(diagnosis));
+    let result = validateAiResult(normalizeAiResult(await primaryProvider.diagnose(diagnosis)));
     if (result.mode === 'finding') {
       if (reviewerProvider?.review) {
         result = await crossReviewDiagnosis(result, { reviewer: (payload) => reviewerProvider.review(payload) });
