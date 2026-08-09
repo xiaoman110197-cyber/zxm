@@ -1,6 +1,9 @@
 import { parseWorkbook } from '../audit/workbook.js';
 
 const SUPPORTED = new Set(['.xlsx','.xls','.csv','.pdf','.docx','.jpg','.jpeg','.png']);
+const MAX_EXTRACTED_TEXT_CHARS = 12000;
+const TRUNCATION_MARKER = '\n…[中间内容已截断]…\n';
+const TRUNCATION_WARNING = '文档内容过长，当前诊断仅保留开头和结尾部分；关键内容请人工确认或拆分文件上传';
 
 function extensionOf(name) {
   const lower = String(name || '').toLowerCase();
@@ -30,6 +33,22 @@ function assertSignature(extension, buffer) {
   } else if (extension === '.csv') {
     if (buffer.includes(0x00)) throw new Error('CSV 文件格式异常或损坏');
   }
+}
+
+function boundExtractedText(value, initialWarnings = []) {
+  const text = String(value || '').trim();
+  const warnings = [...initialWarnings];
+  if (text.length <= MAX_EXTRACTED_TEXT_CHARS) return { text, truncated:false, warnings };
+
+  const available = MAX_EXTRACTED_TEXT_CHARS - TRUNCATION_MARKER.length;
+  const headLength = Math.ceil(available / 2);
+  const tailLength = Math.floor(available / 2);
+  warnings.push(TRUNCATION_WARNING);
+  return {
+    text: `${text.slice(0, headLength)}${TRUNCATION_MARKER}${text.slice(-tailLength)}`,
+    truncated:true,
+    warnings
+  };
 }
 
 function sheetDocument(name, extension, workbook) {
@@ -97,10 +116,11 @@ export async function parseBusinessDocument({ name, buffer }, deps = {}) {
   if (extension === '.pdf') {
     const extractor = deps.pdfTextExtractor || defaultPdfTextExtractor;
     const extracted = await extractor(buffer);
-    const warnings = [];
-    if (!extracted.text) warnings.push('PDF 未提取到可用文字；扫描件可能需要图片识别');
+    const initialWarnings = [];
+    if (!extracted.text) initialWarnings.push('PDF 未提取到可用文字；扫描件可能需要图片识别');
+    const bounded = boundExtractedText(extracted.text, initialWarnings);
     return {
-      document:{ name, type:'pdf', structured:false, confidence:extracted.text ? 1 : 0, text:extracted.text || '', pageCount:extracted.pageCount ?? null, warnings },
+      document:{ name, type:'pdf', structured:false, confidence:bounded.text ? 1 : 0, text:bounded.text, truncated:bounded.truncated, pageCount:extracted.pageCount ?? null, warnings:bounded.warnings },
       workbook:null
     };
   }
@@ -108,10 +128,11 @@ export async function parseBusinessDocument({ name, buffer }, deps = {}) {
   if (extension === '.docx') {
     const extractor = deps.docxTextExtractor || defaultDocxTextExtractor;
     const extracted = await extractor(buffer);
-    const warnings = [...(extracted.warnings || [])];
-    if (!extracted.text) warnings.push('Word 文档未提取到可用文字');
+    const initialWarnings = [...(extracted.warnings || [])];
+    if (!extracted.text) initialWarnings.push('Word 文档未提取到可用文字');
+    const bounded = boundExtractedText(extracted.text, initialWarnings);
     return {
-      document:{ name, type:'docx', structured:false, confidence:extracted.text ? 1 : 0, text:extracted.text || '', warnings },
+      document:{ name, type:'docx', structured:false, confidence:bounded.text ? 1 : 0, text:bounded.text, truncated:bounded.truncated, warnings:bounded.warnings },
       workbook:null
     };
   }
@@ -119,11 +140,12 @@ export async function parseBusinessDocument({ name, buffer }, deps = {}) {
   const ocr = deps.imageOcr || defaultImageOcr;
   const extracted = await ocr(buffer);
   const confidence = Number.isFinite(extracted.confidence) ? Math.max(0, Math.min(1, extracted.confidence)) : 0;
-  const warnings = [];
-  if (confidence < 0.65) warnings.push('图片文字识别置信度较低，请人工确认关键数字');
-  if (!extracted.text) warnings.push('图片未识别到可用文字');
+  const initialWarnings = [];
+  if (confidence < 0.65) initialWarnings.push('图片文字识别置信度较低，请人工确认关键数字');
+  if (!extracted.text) initialWarnings.push('图片未识别到可用文字');
+  const bounded = boundExtractedText(extracted.text, initialWarnings);
   return {
-    document:{ name, type:'image', structured:false, confidence, text:extracted.text || '', warnings },
+    document:{ name, type:'image', structured:false, confidence, text:bounded.text, truncated:bounded.truncated, warnings:bounded.warnings },
     workbook:null
   };
 }
