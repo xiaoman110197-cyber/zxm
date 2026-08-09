@@ -25,6 +25,17 @@ test('parses PDF text without inventing structured metrics', async () => {
   assert.equal(result.workbook, null);
 });
 
+test('bounds very long unstructured text and marks the document as truncated', async () => {
+  const buffer = Buffer.from('%PDF-1.4\nmock', 'utf8');
+  const longText = `开头-${'A'.repeat(15000)}-结尾`;
+  const result = await parseBusinessDocument({ name:'长报告.pdf', buffer }, { ...deps, pdfTextExtractor: async () => ({ text:longText, pageCount:40 }) });
+  assert.equal(result.document.truncated, true);
+  assert.ok(result.document.text.length <= 12100);
+  assert.match(result.document.text, /开头/);
+  assert.match(result.document.text, /结尾/);
+  assert.ok(result.document.warnings.some((warning) => /截断|过长/.test(warning)));
+});
+
 test('parses DOCX text through the document extractor', async () => {
   const buffer = Buffer.from([0x50,0x4b,0x03,0x04,1,2,3,4]);
   const result = await parseBusinessDocument({ name:'方案.docx', buffer }, deps);
