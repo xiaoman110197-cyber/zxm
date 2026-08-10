@@ -120,6 +120,14 @@ test('non-Excel uploads do not enable Excel report reconstruction', () => {
   assert.match(js, /document\.type\s*===\s*['"]excel['"]/);
 });
 
+test('accepted or retained calculation corrections are recorded as diagnosis evidence without rewriting source text', () => {
+  assert.match(js, /correction_decision:/);
+  assert.match(js, /accepted|kept_original/);
+  assert.match(js, /originalValue/);
+  assert.match(js, /correctedValue/);
+  assert.doesNotMatch(js, /pending\.result\.document\.text\s*=/);
+});
+
 test('layout is mobile-first and avoids fixed desktop width', () => {
   assert.match(html, /viewport/);
   assert.match(css, /max-width/);
