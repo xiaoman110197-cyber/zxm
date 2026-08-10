@@ -78,9 +78,16 @@ function parseDate(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
   if (typeof value !== 'string') return null;
   const normalized = value.trim().replace(/[年/.]/g, '-').replace(/月/g, '-').replace(/日/g, '');
-  if (!/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) return null;
-  const date = new Date(`${normalized}T00:00:00Z`);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (Number.isNaN(date.getTime())) return null;
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return date;
 }
 
 function groupByScope(facts) {
