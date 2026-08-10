@@ -38,6 +38,18 @@ test('file api analyzes all Excel sheets and returns deterministic audit', async
   assert.equal(res.body.summary.sheetCount, 2);
 });
 
+test('structured upload gives AI bounded row evidence and a concise audit summary', async () => {
+  const res = mockRes();
+  await handleAnalyzeFileRequest({ method:'POST', body:{ file:{ name:'经营报表.xlsx', contentBase64:workbookBase64() } } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.document.preview[0].name, '订单明细');
+  assert.equal(res.body.document.preview[0].rows[0].营业额, 100);
+  assert.equal(res.body.document.auditSummary.metrics.revenue, 200);
+  assert.equal(res.body.document.auditSummary.errorCount, res.body.audit.errors.length);
+  assert.ok(res.body.document.auditSummary.topIssues.length > 0);
+  assert.ok(res.body.document.auditSummary.topIssues.length <= 10);
+});
+
 test('file api analyzes CSV through the same normalized endpoint', async () => {
   const res = mockRes();
   const contentBase64 = Buffer.from('订单号,营业额\nA001,100\nA002,200', 'utf8').toString('base64');
@@ -45,6 +57,7 @@ test('file api analyzes CSV through the same normalized endpoint', async () => {
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.document.type, 'csv');
   assert.equal(res.body.summary.sheetCount, 1);
+  assert.equal(res.body.document.preview[0].rows.length, 2);
 });
 
 test('file api rejects files above the 3 MB raw-file transport limit before parsing', async () => {
