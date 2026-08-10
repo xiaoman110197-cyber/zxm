@@ -5,7 +5,7 @@ import { parseBusinessDocument } from '../../src/documents/parse.js';
 const deps = {
   pdfTextExtractor: async () => ({ text: '营业额 100 元', pageCount: 1 }),
   docxTextExtractor: async () => ({ text: '门店经营方案', warnings: [] }),
-  imageOcr: async () => ({ text: '今日营业额 88 元', confidence: 0.82 })
+  imageOcr: async () => ({ text: '今日营业额 88 元', confidence: 0.82, uncertainSegments:[] })
 };
 
 test('parses CSV as structured tabular data', async () => {
@@ -51,6 +51,22 @@ test('parses image OCR with explicit confidence', async () => {
   assert.match(result.document.text, /营业额/);
 });
 
+test('carries concrete low-confidence OCR segments for merchant confirmation', async () => {
+  const buffer = Buffer.from([0xff,0xd8,0xff,0xe0,1,2,3,4]);
+  const result = await parseBusinessDocument({ name:'后台.jpg', buffer }, {
+    ...deps,
+    imageOcr: async () => ({
+      text:'营业额 2865O',
+      confidence:0.47,
+      uncertainSegments:[{ text:'2865O', confidence:0.31, context:'营业额 2865O' }]
+    })
+  });
+
+  assert.deepEqual(result.document.uncertainSegments, [
+    { text:'2865O', confidence:0.31, context:'营业额 2865O' }
+  ]);
+});
+
 test('accepts JPG/PNG filename mismatch when the bytes are still a supported image', async () => {
   const pngBytes = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3]);
   const result = await parseBusinessDocument({ name:'手机重编码.jpg', buffer:pngBytes }, deps);
@@ -69,7 +85,7 @@ test('image parser forwards safe OCR sub-stages into the shared progress callbac
       reportOcrProgress({ status:'loading language traineddata', progress:0.5 });
       reportOcrProgress({ status:'initializing api', progress:0 });
       reportOcrProgress({ status:'recognizing text', progress:0.6 });
-      return { text:'今日营业额 88 元', confidence:0.82 };
+      return { text:'今日营业额 88 元', confidence:0.82, uncertainSegments:[] };
     }
   });
   assert.equal(result.document.type, 'image');
@@ -82,7 +98,7 @@ test('image parser forwards safe OCR sub-stages into the shared progress callbac
 
 test('marks low-confidence image OCR as uncertain instead of reliable fact', async () => {
   const buffer = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1]);
-  const result = await parseBusinessDocument({ name:'模糊截图.png', buffer }, { ...deps, imageOcr: async () => ({ text:'营业额 800?', confidence:0.41 }) });
+  const result = await parseBusinessDocument({ name:'模糊截图.png', buffer }, { ...deps, imageOcr: async () => ({ text:'营业额 800?', confidence:0.41, uncertainSegments:[] }) });
   assert.equal(result.document.confidence, 0.41);
   assert.ok(result.document.warnings.some((warning) => /置信度|确认/.test(warning)));
 });
