@@ -30,13 +30,13 @@ export function buildReportWorkbook({ workbook, audit = {}, findings = [] } = {}
 
   const summary = [{
     数据错误数: errors.length,
-    经营异常数: anomalies.length,
+    程序识别异常数: anomalies.length,
     经营问题数: safeFindings.length,
     P0: safeFindings.filter(f => f.priority === 'P0').length,
     P1: safeFindings.filter(f => f.priority === 'P1').length,
     P2: safeFindings.filter(f => f.priority === 'P2').length
   }];
-  appendJsonSheet(out, '诊断总览', summary, ['数据错误数','经营异常数','经营问题数','P0','P1','P2']);
+  appendJsonSheet(out, '诊断总览', summary, ['数据错误数','程序识别异常数','经营问题数','P0','P1','P2']);
 
   appendJsonSheet(out, '错误清单', errors.map(e => ({
     类型: e.type ?? '', Sheet: e.sheet ?? '', 字段: e.field ?? '', 原值: e.originalValue ?? '', 原因: e.reason ?? '', 置信度: e.confidence ?? ''
