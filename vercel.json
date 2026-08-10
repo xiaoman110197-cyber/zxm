@@ -4,7 +4,8 @@
   "outputDirectory": "dist",
   "functions": {
     "api/analyze-file.js": { "maxDuration": 180 },
-    "api/diagnosis.js": { "maxDuration": 45 }
+    "api/diagnosis.js": { "maxDuration": 45 },
+    "api/ocr-health.js": { "maxDuration": 30 }
   },
   "headers": [
     {
