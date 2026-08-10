@@ -35,6 +35,7 @@ test('corrects gross margin only when explicit reliable source values prove the 
     workbook:null,
     document:{
       type:'image',
+      confidence:0.91,
       text:'营业额：100000 元\n成本：40000 元\n毛利：60000 元\n毛利率：68%',
       uncertainSegments:[]
     }
@@ -53,6 +54,7 @@ test('does not auto-correct when a required OCR input is uncertain', () => {
     workbook:null,
     document:{
       type:'image',
+      confidence:0.84,
       text:'营业额：100000 元\n成本：40000 元\n毛利：60000 元\n毛利率：68%',
       uncertainSegments:[{ text:'40000', confidence:0.31, context:'成本：40000 元' }]
     }
@@ -64,12 +66,31 @@ test('does not auto-correct when a required OCR input is uncertain', () => {
   assert.match(margin.explanation, /成本|确认/);
 });
 
+test('does not auto-correct from an image whose overall OCR confidence is low', () => {
+  const corrections = detectCalculationCorrections({
+    audit:{ errors:[], anomalies:[], metrics:{} },
+    workbook:null,
+    document:{
+      type:'image',
+      confidence:0.47,
+      text:'营业额：100000 元\n成本：40000 元\n毛利：60000 元\n毛利率：68%',
+      uncertainSegments:[]
+    }
+  });
+
+  const margin = corrections.find((item) => item.label === '毛利率');
+  assert.equal(margin.kind, 'needs_confirmation');
+  assert.equal(margin.correctedValue, undefined);
+  assert.match(margin.explanation, /整体|识别|确认/);
+});
+
 test('treats order-price-days versus monthly revenue as an inconsistency instead of a forced correction', () => {
   const corrections = detectCalculationCorrections({
     audit:{ errors:[], anomalies:[], metrics:{} },
     workbook:null,
     document:{
       type:'image',
+      confidence:0.93,
       text:'月营业额：100000 元\n日均订单：70 单\n客单价：38 元\n营业天数：30 天',
       uncertainSegments:[]
     }
