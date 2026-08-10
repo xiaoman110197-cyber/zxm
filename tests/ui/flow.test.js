@@ -61,6 +61,13 @@ test('mobile images are resized before OCR transport when they are unnecessarily
   assert.match(js, /正在优化图片/);
 });
 
+test('image optimization preserves JPEG versus PNG even when browser MIME metadata is blank', () => {
+  assert.match(js, /preferredOcrImageType/);
+  assert.match(js, /\.jpe\?g/i);
+  assert.match(js, /image\/jpeg/);
+  assert.match(js, /image\/png/);
+});
+
 test('switching the page to the background pauses a long file request and automatically retries once on return', () => {
   assert.match(js, /visibilitychange/);
   assert.match(js, /visibilityState/);
