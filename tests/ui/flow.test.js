@@ -21,6 +21,12 @@ test('business-material upload is optional and exposes five mainstream categorie
   assert.match(js, /\/api\/analyze-file-stream/);
 });
 
+test('upload card explains data use and warns against unnecessary highly sensitive personal data', () => {
+  assert.match(html, /经营诊断/);
+  assert.match(html, /身份证|银行卡/);
+  assert.match(html, /避免|不要/);
+});
+
 test('current Base64 upload transport blocks files above 3 MB before the request', () => {
   assert.match(js, /MAX_FILE_BYTES\s*=\s*3\s*\*\s*1024\s*\*\s*1024/);
   assert.match(js, /file\.size\s*>\s*MAX_FILE_BYTES/);
@@ -51,6 +57,14 @@ test('file upload ignores stale responses and clears prior file evidence', () =>
   assert.match(js, /requestId\s*!==\s*state\.fileRequestId/);
   assert.match(js, /file_analysis:/);
   assert.match(js, /filter\([^\n]+file_analysis:/);
+});
+
+test('diagnosis request has an explicit busy guard and visible pending label', () => {
+  assert.match(js, /diagnosisBusy/);
+  assert.match(js, /if\s*\(state\.diagnosisBusy\)\s*return/);
+  assert.match(js, /正在分析…/);
+  assert.match(js, /state\.diagnosisBusy\s*=\s*true/);
+  assert.match(js, /state\.diagnosisBusy\s*=\s*false/);
 });
 
 test('file issue display groups repeated errors instead of dumping every code', () => {
