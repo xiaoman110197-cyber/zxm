@@ -1,0 +1,15 @@
+name: Debug Vercel OCR Health
+
+on:
+  push:
+    branches:
+      - debug/vercel-ocr-health
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe previous Vercel preview OCR health endpoint
+        run: |
+          curl --silent --show-error --fail-with-body --max-time 25 \
+            https://zhenduan-v03-preview-op5jve2e0-zxzxzxmzxm.vercel.app/api/ocr-health
