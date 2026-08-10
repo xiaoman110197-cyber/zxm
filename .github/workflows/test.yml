@@ -46,6 +46,16 @@ jobs:
           console.log(`production OCR HTTP ${response.status}`);
 
           const blocks = body.split('\n\n').filter(Boolean);
+          const progress = blocks
+            .filter((block) => block.startsWith('event: progress'))
+            .map((block) => {
+              const line = block.split('\n').find((item) => item.startsWith('data: '));
+              return line ? JSON.parse(line.slice(6)) : {};
+            });
+          for (const item of progress) {
+            console.log(`progress ${item.phase || '-'} ${item.stage || '-'} ${item.percent ?? '-'}%`);
+          }
+
           const resultBlock = blocks.find((block) => block.startsWith('event: result'));
           const errorBlock = blocks.find((block) => block.startsWith('event: error'));
           if (!resultBlock) {
