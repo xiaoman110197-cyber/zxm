@@ -63,7 +63,7 @@ function normalizeVisionResult(parsed, model) {
   const candidates = Array.isArray(parsed?.candidates)
     ? parsed.candidates.slice(0, MAX_CANDIDATES).map(normalizeCandidate).filter(Boolean)
     : [];
-  return { available:true, provider:'openai', model, facts, candidates, warning:null };
+  return { available:true, provider:'openai', model, facts, candidates, warning:null, failureCode:null };
 }
 
 function extractOutputText(payload) {
@@ -118,11 +118,25 @@ function responseSchema() {
   };
 }
 
+function safeFailure(code, { model, logWarn }) {
+  if (typeof logWarn === 'function') logWarn('[vision]', code, `model=${model}`);
+  return {
+    available:false,
+    provider:null,
+    model:null,
+    facts:[],
+    candidates:[],
+    failureCode:code,
+    warning:`视觉分析暂时失败（错误编号 ${code}），已使用文字识别继续检查`
+  };
+}
+
 export async function analyzeReportImage(input, {
   apiKey = process.env.OPENAI_API_KEY || '',
   model = process.env.OPENAI_VISION_MODEL || 'gpt-5-mini',
   fetchImpl = fetch,
-  timeoutMs = 15000
+  timeoutMs = 15000,
+  logWarn = console.warn
 } = {}) {
   if (!apiKey) {
     return {
@@ -131,13 +145,15 @@ export async function analyzeReportImage(input, {
       model:null,
       facts:[],
       candidates:[],
-      warning:'视觉分析暂不可用，已使用文字识别继续检查'
+      failureCode:'VISION_KEY_MISSING',
+      warning:'视觉分析暂不可用（错误编号 VISION_KEY_MISSING），已使用文字识别继续检查'
     };
   }
 
   const imageUrl = `data:${input.mimeType};base64,${input.buffer.toString('base64')}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let stage = 'network';
   try {
     const response = await fetchImpl('https://api.openai.com/v1/responses', {
       method:'POST',
@@ -171,21 +187,28 @@ export async function analyzeReportImage(input, {
         }
       })
     });
-    if (!response.ok) throw new Error(`vision request failed (${response.status})`);
+
+    if (!response.ok) return safeFailure(`VISION_HTTP_${response.status || 'UNKNOWN'}`, { model, logWarn });
+
+    stage = 'response-json';
     const payload = await response.json();
     const outputText = extractOutputText(payload);
-    if (!outputText) throw new Error('vision response has no output text');
-    const parsed = JSON.parse(outputText);
+    if (!outputText) return safeFailure('VISION_EMPTY_OUTPUT', { model, logWarn });
+
+    stage = 'output-json';
+    let parsed;
+    try {
+      parsed = JSON.parse(outputText);
+    } catch {
+      return safeFailure('VISION_INVALID_JSON', { model, logWarn });
+    }
     return normalizeVisionResult(parsed, model);
-  } catch {
-    return {
-      available:false,
-      provider:null,
-      model:null,
-      facts:[],
-      candidates:[],
-      warning:'视觉分析暂时失败，已使用文字识别继续检查'
-    };
+  } catch (error) {
+    if (controller.signal.aborted || error?.name === 'AbortError') {
+      return safeFailure('VISION_TIMEOUT', { model, logWarn });
+    }
+    if (stage === 'response-json') return safeFailure('VISION_RESPONSE_JSON', { model, logWarn });
+    return safeFailure('VISION_NETWORK_ERROR', { model, logWarn });
   } finally {
     clearTimeout(timer);
   }
