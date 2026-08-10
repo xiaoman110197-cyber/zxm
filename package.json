@@ -8,9 +8,12 @@
     "build": "rm -rf dist && cp -R public dist"
   },
   "dependencies": {
+    "mammoth": "1.12.0",
+    "pdf-parse": "2.4.5",
+    "tesseract.js": "7.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.16.0"
   }
 }

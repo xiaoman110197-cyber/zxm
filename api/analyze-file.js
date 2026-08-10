@@ -1,5 +1,8 @@
-import { parseWorkbook } from '../src/audit/workbook.js';
 import { auditWorkbook } from '../src/audit/rules.js';
+import { parseBusinessDocument, supportedBusinessDocumentExtensions } from '../src/documents/parse.js';
+
+const MAX_FILE_BYTES = 3 * 1024 * 1024;
+const MAX_CONTEXT_ISSUES = 10;
 
 function normalizeAudit(audit) {
   return {
@@ -23,21 +26,50 @@ function normalizeAudit(audit) {
   };
 }
 
-function isValidExcelBuffer(name, buffer) {
-  const lower = name.toLowerCase();
-  if (lower.endsWith('.xlsx')) return buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
-  if (lower.endsWith('.xls')) return buffer.length >= 8 && buffer[0] === 0xd0 && buffer[1] === 0xcf;
-  return false;
+function extensionOf(name) {
+  const lower = String(name || '').toLowerCase();
+  const index = lower.lastIndexOf('.');
+  return index >= 0 ? lower.slice(index) : '';
 }
 
-export async function handleAnalyzeFileRequest(req, res) {
+function emptyAudit() {
+  return { errors: [], anomalies: [], metrics: {} };
+}
+
+function countRows(workbook) {
+  return workbook?.sheets?.reduce((sum, sheet) => sum + sheet.rows.length, 0) || 0;
+}
+
+function compactIssue(issue) {
+  const keys = ['type','sheet','row','field','reason','metric','expected','actual','duplicateOf','sourceSheet','summarySheet','confidence'];
+  const compact = {};
+  for (const key of keys) {
+    if (issue?.[key] !== undefined && issue?.[key] !== null) compact[key] = issue[key];
+  }
+  return compact;
+}
+
+function attachAuditSummary(document, audit) {
+  return {
+    ...document,
+    auditSummary: {
+      errorCount: audit.errors.length,
+      anomalyCount: audit.anomalies.length,
+      metrics: audit.metrics,
+      topIssues: audit.errors.slice(0, MAX_CONTEXT_ISSUES).map(compactIssue),
+      topAnomalies: audit.anomalies.slice(0, MAX_CONTEXT_ISSUES).map(compactIssue)
+    }
+  };
+}
+
+export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   if (req.method && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const file = req.body?.file;
   if (!file?.name || !file?.contentBase64) return res.status(400).json({ error: 'file with name and contentBase64 is required' });
 
-  const lower = file.name.toLowerCase();
-  if (!lower.endsWith('.xlsx') && !lower.endsWith('.xls')) {
-    return res.status(415).json({ error: '当前阶段仅支持 Excel (.xlsx/.xls)' });
+  const extension = extensionOf(file.name);
+  if (!supportedBusinessDocumentExtensions.includes(extension)) {
+    return res.status(415).json({ error: '支持 Excel、CSV、PDF、Word DOCX 和 JPG/PNG 图片' });
   }
 
   let buffer;
@@ -46,31 +78,36 @@ export async function handleAnalyzeFileRequest(req, res) {
   } catch {
     return res.status(422).json({ error: '文件内容损坏或无法解析' });
   }
-  if (!buffer.length || !isValidExcelBuffer(file.name, buffer)) {
-    return res.status(422).json({ error: 'Excel 文件损坏或无法解析' });
+  if (!buffer.length) return res.status(422).json({ error: '文件内容为空或无法解析' });
+  if (buffer.length > MAX_FILE_BYTES) {
+    return res.status(413).json({ error: '文件过大：当前版本单个文件最大支持 3 MB' });
   }
 
   try {
-    const workbook = parseWorkbook(buffer);
-    if (!workbook.sheets.length) return res.status(422).json({ error: 'Excel 文件无法解析：没有可读取的工作表' });
-    const audit = normalizeAudit(auditWorkbook(workbook));
+    const parser = deps.parseBusinessDocument || parseBusinessDocument;
+    const parsed = await parser({ name:file.name, buffer }, deps);
+    const audit = parsed.workbook ? normalizeAudit(auditWorkbook(parsed.workbook)) : emptyAudit();
+    const document = attachAuditSummary(parsed.document, audit);
+    const warnings = Array.isArray(document.warnings) ? document.warnings : [];
     return res.status(200).json({
-      document: {
-        name: file.name,
-        type: 'excel',
-        sheetNames: workbook.sheets.map((sheet) => sheet.name),
-        sheets: workbook.sheets.map((sheet) => ({ name: sheet.name, headers: sheet.headers, rowCount: sheet.rows.length }))
-      },
+      document,
       audit,
       summary: {
-        sheetCount: workbook.sheets.length,
+        fileType: document.type,
+        sheetCount: parsed.workbook?.sheets?.length || 0,
+        rowCount: countRows(parsed.workbook),
+        textLength: typeof document.text === 'string' ? document.text.length : 0,
+        warningCount: warnings.length,
         errorCount: audit.errors.length,
         anomalyCount: audit.anomalies.length,
+        confidence: typeof document.confidence === 'number' ? document.confidence : null,
         metrics: audit.metrics
       }
     });
   } catch (error) {
-    return res.status(422).json({ error: 'Excel 文件损坏或无法解析', detail: error instanceof Error ? error.message : String(error) });
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error('[analyze-file]', file.name, detail);
+    return res.status(422).json({ error: '文件损坏、格式不匹配或内容无法解析', detail });
   }
 }
 
