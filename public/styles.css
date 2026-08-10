@@ -24,7 +24,13 @@ input[type=file] { width:100%; margin-top:8px; padding:12px; border:1px dashed #
 .bubble.owner { background:#f0efe9; margin-left:22px; }
 .bubble.ai { background:#fafafa; border:1px solid #eceae4; margin-right:22px; }
 .error,.file-errors { color:#9b2c2c; line-height:1.5; }
-.status { margin-top:10px; color:#555; }
+.status { margin-top:10px; color:#555; line-height:1.5; }
+.file-progress { margin-top:14px; padding:12px; background:#f7f6f2; border-radius:12px; }
+.file-progress-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:9px; color:#444; font-size:14px; }
+.file-progress-head strong { color:#171717; font-variant-numeric:tabular-nums; }
+.file-progress-track { width:100%; height:9px; overflow:hidden; border-radius:999px; background:#e6e3dc; }
+.file-progress-fill { display:block; width:0%; height:100%; border-radius:inherit; background:#171717; transition:width .18s ease-out; }
+.file-retry-row { display:flex; justify-content:flex-start; margin-top:8px; }
 .legend { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0; }
 .legend span,.badge { font-size:12px; padding:5px 8px; background:#f1f0ec; border-radius:999px; }
 .finding { border-top:1px solid #eceae4; padding:15px 0 4px; }
