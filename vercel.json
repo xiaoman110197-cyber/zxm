@@ -1,5 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "functions": {
+    "api/analyze-file.js": {
+      "maxDuration": 60
+    },
+    "api/analyze-file-stream.js": {
+      "maxDuration": 60
+    }
+  }
 }
