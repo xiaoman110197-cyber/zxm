@@ -17,7 +17,7 @@ test('image OCR requires merchant confirmation before the document enters diagno
   assert.match(js, /pendingFileReview/);
   assert.match(js, /renderFileReview/);
   assert.match(js, /confirmPendingFileReview/);
-  assert.match(js, /document\.type\s*===\s*['"]image['"]/);
+  assert.match(js, /document\?*\.type\s*===\s*['"]image['"]/);
   assert.match(js, /识别结果可能存在误差/);
   assert.match(js, /请先确认识别内容/);
 
