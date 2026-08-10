@@ -1,12 +1,21 @@
+import { SESSION_KEY, createSessionSnapshot, restoreSessionSnapshot } from './session.js';
+
 const $ = (id) => document.getElementById(id);
 const PRIORITIES = ['P0', 'P1', 'P2'];
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
+
+function newDiagnosis() {
+  return { id:crypto.randomUUID(), answers:{}, evidence:[], findings:[], documents:[], dialogue:[] };
+}
+
 const state = {
-  diagnosis: { id: crypto.randomUUID(), answers: {}, evidence: [], findings: [], documents: [] },
+  diagnosis: newDiagnosis(),
   turn: 0,
   originalFile: null,
   originalBase64: '',
   audit: null,
+  pendingDiagnosisRequest: false,
+  diagnosisRequestInFlight: false,
   pendingFile: null,
   fileAnalysisController: null,
   fileElapsedTimer: null,
@@ -14,11 +23,40 @@ const state = {
   fileProgressPercent: 0
 };
 
-function addBubble(text, who) {
+function renderBubble(text, who, reason = '') {
   const node = document.createElement('div');
   node.className = `bubble ${who}`;
-  node.textContent = text;
+
+  const textNode = document.createElement('div');
+  textNode.className = 'bubble-text';
+  textNode.textContent = text;
+  node.append(textNode);
+
+  if (who === 'ai' && reason) {
+    const details = document.createElement('details');
+    details.className = 'bubble-reason';
+    const summary = document.createElement('summary');
+    summary.textContent = '为什么问这个';
+    const explanation = document.createElement('p');
+    explanation.textContent = reason;
+    details.append(summary, explanation);
+    node.append(details);
+  }
   $('conversation').append(node);
+}
+
+function appendDialogue(text, who, reason = '') {
+  const entry = { who, text, ...(reason ? { reason } : {}) };
+  state.diagnosis.dialogue.push(entry);
+  renderBubble(text, who, reason);
+  saveSession();
+}
+
+function renderConversation() {
+  $('conversation').replaceChildren();
+  for (const entry of state.diagnosis.dialogue || []) {
+    renderBubble(entry.text, entry.who, entry.reason || '');
+  }
 }
 
 function findingLabel(status) {
@@ -32,6 +70,15 @@ function updateDownloadState() {
 function renderFindings(findings) {
   const root = $('findings');
   root.replaceChildren();
+  if (!Array.isArray(findings) || !findings.length) {
+    const placeholder = document.createElement('p');
+    placeholder.className = 'muted';
+    placeholder.textContent = '完成问诊后，这里会显示经营问题、证据、影响、行动和验证指标。';
+    root.append(placeholder);
+    updateDownloadState();
+    return;
+  }
+
   for (const finding of findings) {
     const card = document.createElement('article');
     card.className = 'finding';
@@ -49,38 +96,142 @@ function renderFindings(findings) {
   updateDownloadState();
 }
 
+function saveSession() {
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(createSessionSnapshot(state)));
+  } catch {
+    $('session-status').textContent = '本机草稿暂时无法保存；当前页面内仍可继续问诊。';
+  }
+}
+
+function restoreSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return false;
+    const restored = restoreSessionSnapshot(JSON.parse(raw));
+    if (!restored) {
+      localStorage.removeItem(SESSION_KEY);
+      return false;
+    }
+    state.turn = restored.turn;
+    state.diagnosis = {
+      ...restored.diagnosis,
+      evidence: [],
+      documents: [],
+      dialogue: restored.diagnosis.dialogue || []
+    };
+    renderConversation();
+    renderFindings(state.diagnosis.findings);
+    $('session-status').textContent = '已恢复上次文字问诊。上传资料不会从本地草稿恢复，如需继续使用请重新选择文件。';
+    $('send').textContent = '继续诊断';
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch {}
+}
+
+function errorWithRequestId(message, requestId) {
+  return requestId ? `${message}（错误编号：${requestId}）` : message;
+}
+
 async function postJson(url, body) {
-  const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const response = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body) });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error || `请求失败 (${response.status})`);
+    error.requestId = data.requestId || '';
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 
+function diagnosisErrorMessage(error) {
+  let message = error.message || '本轮诊断失败，请重试';
+  if (error.status === 429) message = '请求较频繁，请稍后再试。';
+  else if (/AI diagnosis failed/i.test(message)) message = 'AI 暂时无法完成本轮判断，请直接重试。';
+  return errorWithRequestId(message, error.requestId);
+}
+
+async function requestDiagnosis() {
+  if (state.diagnosisRequestInFlight) return;
+  state.diagnosisRequestInFlight = true;
+  state.pendingDiagnosisRequest = false;
+  $('request-error').textContent = '';
+  $('retry-diagnosis').hidden = true;
+  $('send').disabled = true;
+  const previousLabel = $('send').textContent;
+  $('send').textContent = '正在判断…';
+
+  try {
+    const result = await postJson('/api/diagnosis', { diagnosis:state.diagnosis });
+    if (result.mode === 'question') {
+      const reason = result.question.reason || '';
+      appendDialogue(result.question.question, 'ai', reason);
+      state.diagnosis.evidence.push(`ai_question:${result.question.key}:${reason}`);
+    } else {
+      state.diagnosis.findings = result.findings || [];
+      renderFindings(state.diagnosis.findings);
+      appendDialogue('已形成当前阶段的经营诊断。你仍可以继续补充信息，我会据此重新判断。', 'ai');
+    }
+    state.pendingDiagnosisRequest = false;
+    saveSession();
+  } catch (error) {
+    state.pendingDiagnosisRequest = true;
+    $('retry-diagnosis').hidden = false;
+    $('request-error').textContent = diagnosisErrorMessage(error);
+    saveSession();
+  } finally {
+    state.diagnosisRequestInFlight = false;
+    $('send').disabled = false;
+    $('send').textContent = state.turn ? '继续诊断' : previousLabel;
+  }
+}
+
 async function sendDiagnosis() {
+  if (state.diagnosisRequestInFlight) return;
   const input = $('owner-input');
   const text = input.value.trim();
   if (!text) return;
   $('request-error').textContent = '';
-  addBubble(text, 'owner');
   state.turn += 1;
   state.diagnosis.answers[`owner_turn_${state.turn}`] = text;
+  appendDialogue(text, 'owner');
   input.value = '';
-  $('send').disabled = true;
-  try {
-    const result = await postJson('/api/diagnosis', { diagnosis: state.diagnosis });
-    if (result.mode === 'question') {
-      addBubble(result.question.question, 'ai');
-      state.diagnosis.evidence.push(`ai_question:${result.question.key}:${result.question.reason || ''}`);
-    } else {
-      state.diagnosis.findings = result.findings || [];
-      renderFindings(state.diagnosis.findings);
-      addBubble('已形成当前阶段的经营诊断。你仍可以继续补充信息，我会据此重新判断。', 'ai');
-    }
-  } catch (error) {
-    $('request-error').textContent = error.message;
-  } finally {
-    $('send').disabled = false;
-  }
+  state.pendingDiagnosisRequest = true;
+  saveSession();
+  await requestDiagnosis();
+}
+
+function resetDiagnosisExperience() {
+  state.fileAnalysisController?.abort();
+  state.diagnosis = newDiagnosis();
+  state.turn = 0;
+  state.pendingDiagnosisRequest = false;
+  state.diagnosisRequestInFlight = false;
+  state.pendingFile = null;
+  state.originalFile = null;
+  state.originalBase64 = '';
+  state.audit = null;
+  $('conversation').replaceChildren();
+  $('owner-input').value = '';
+  $('request-error').textContent = '';
+  $('retry-diagnosis').hidden = true;
+  $('send').disabled = false;
+  $('send').textContent = '开始诊断';
+  $('workbook').value = '';
+  $('workbook').disabled = false;
+  $('file-progress').hidden = true;
+  $('file-status').textContent = '';
+  $('file-errors').textContent = '';
+  $('session-status').textContent = '已开始新问诊。文字问诊会在本机保存 7 天；上传的原文件和识别全文不会写入本地草稿。';
+  renderFindings([]);
+  clearSession();
+  updateDownloadState();
 }
 
 function fileToBase64(file, { signal, onProgress } = {}) {
@@ -195,7 +346,7 @@ function parseSseBlock(block) {
   }
   if (!dataLines.length) return null;
   const raw = dataLines.join('\n');
-  return { event, data: JSON.parse(raw) };
+  return { event, data:JSON.parse(raw) };
 }
 
 function handleAnalysisStreamEvent(parsed, onProgress) {
@@ -216,13 +367,13 @@ function handleAnalysisStreamEvent(parsed, onProgress) {
 async function readAnalysisStream(response, onProgress) {
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `文件分析请求失败 (${response.status})`);
+    const error = new Error(data.error || `文件分析请求失败 (${response.status})`);
+    error.requestId = data.requestId || '';
+    throw error;
   }
 
   const contentType = response.headers.get('content-type') || '';
-  if (!contentType.includes('text/event-stream')) {
-    return response.json();
-  }
+  if (!contentType.includes('text/event-stream')) return response.json();
 
   let finalResult = null;
   const processBlock = (block) => {
@@ -243,7 +394,7 @@ async function readAnalysisStream(response, onProgress) {
   let pending = '';
   while (true) {
     const { done, value } = await reader.read();
-    pending += decoder.decode(value || new Uint8Array(), { stream: !done });
+    pending += decoder.decode(value || new Uint8Array(), { stream:!done });
     const blocks = pending.split(/\r?\n\r?\n/);
     pending = blocks.pop() || '';
     for (const block of blocks) processBlock(block);
@@ -280,6 +431,7 @@ function applySuccessfulFileAnalysis(file, contentBase64, result) {
   $('file-status').textContent = fileStatusText(result);
   $('file-errors').textContent = summarizeFileIssues(result);
   updateDownloadState();
+  saveSession();
 }
 
 async function analyzeBusinessFile(file) {
@@ -320,7 +472,7 @@ async function analyzeBusinessFile(file) {
     setFileProgressActions({ analyzing:false, retry:false });
   } catch (error) {
     const cancelled = error?.name === 'AbortError';
-    const baseMessage = cancelled ? '已取消分析。' : `文件分析失败：${error.message}`;
+    const baseMessage = cancelled ? '已取消分析。' : errorWithRequestId(`文件分析失败：${error.message}`, error.requestId);
     const keepMessage = previousDocument ? ' 此前成功分析的资料仍保留。' : '';
     $('file-errors').textContent = `${baseMessage}${keepMessage}`;
     $('file-progress-message').textContent = cancelled ? '分析已取消，可重新分析' : '分析已中断，可重新分析';
@@ -337,7 +489,7 @@ function base64ToBlob(contentBase64, mimeType) {
   const binary = atob(contentBase64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mimeType });
+  return new Blob([bytes], { type:mimeType });
 }
 
 async function downloadReport() {
@@ -346,9 +498,9 @@ async function downloadReport() {
   $('download-excel').disabled = true;
   try {
     const result = await postJson('/api/report', {
-      file: { name: state.originalFile.name, contentBase64: state.originalBase64 },
-      audit: state.audit || { errors: [], anomalies: [], metrics: {} },
-      findings: state.diagnosis.findings
+      file:{ name:state.originalFile.name, contentBase64:state.originalBase64 },
+      audit:state.audit || { errors:[], anomalies:[], metrics:{} },
+      findings:state.diagnosis.findings
     });
     const blob = base64ToBlob(result.contentBase64, result.mimeType);
     const url = URL.createObjectURL(blob);
@@ -360,13 +512,17 @@ async function downloadReport() {
     link.remove();
     URL.revokeObjectURL(url);
   } catch (error) {
-    $('request-error').textContent = `报告下载失败：${error.message}`;
+    $('request-error').textContent = errorWithRequestId(`报告下载失败：${error.message}`, error.requestId);
   } finally {
     updateDownloadState();
   }
 }
 
 $('send').addEventListener('click', sendDiagnosis);
+$('retry-diagnosis').addEventListener('click', () => {
+  if (state.pendingDiagnosisRequest) requestDiagnosis();
+});
+$('new-diagnosis').addEventListener('click', resetDiagnosisExperience);
 $('owner-input').addEventListener('keydown', (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') sendDiagnosis();
 });
@@ -379,3 +535,5 @@ $('retry-file').addEventListener('click', () => {
   if (state.pendingFile && !state.fileAnalysisController) analyzeBusinessFile(state.pendingFile);
 });
 $('download-excel').addEventListener('click', downloadReport);
+
+restoreSession();
