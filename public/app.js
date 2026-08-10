@@ -20,6 +20,7 @@ const state = {
   diagnosisRequestInFlight: false,
   diagnosisRequestController: null,
   pendingFile: null,
+  pendingFileReview: null,
   fileAnalysisController: null,
   fileElapsedTimer: null,
   fileAnalysisStartedAt: 0,
@@ -225,6 +226,18 @@ function stopFileElapsedTimer() {
   state.fileElapsedTimer = null;
 }
 
+function hideFileReview() {
+  $('file-review').hidden = true;
+  $('file-review-text').textContent = '';
+  $('file-review-warning').textContent = '';
+  $('file-review-confidence').textContent = '';
+}
+
+function clearPendingFileReview() {
+  state.pendingFileReview = null;
+  hideFileReview();
+}
+
 function resetDiagnosisExperience() {
   state.diagnosisRequestController?.abort();
   state.fileAnalysisController?.abort();
@@ -236,6 +249,7 @@ function resetDiagnosisExperience() {
   state.pendingDiagnosisRequest = false;
   state.diagnosisRequestInFlight = false;
   state.pendingFile = null;
+  clearPendingFileReview();
   state.originalFile = null;
   state.originalBase64 = '';
   state.audit = null;
@@ -376,10 +390,32 @@ function fileStatusText(result) {
   return `已读取 ${type}：提取 ${summary.textLength || 0} 个字符${confidence}；${businessAnomalyText}。资料已加入本次问诊。`;
 }
 
+function imageReviewStatusText(result) {
+  const summary = result.summary || {};
+  const confidence = typeof summary.confidence === 'number' ? `，识别置信度 ${Math.round(summary.confidence * 100)}%` : '';
+  return `已读取图片：提取 ${summary.textLength || 0} 个字符${confidence}；请先确认识别内容，再加入本次问诊。`;
+}
+
+function renderFileReview(file, contentBase64, result) {
+  state.pendingFileReview = { file, contentBase64, result };
+  const confidence = result.summary?.confidence;
+  $('file-review-confidence').textContent = typeof confidence === 'number'
+    ? `置信度 ${Math.round(confidence * 100)}%`
+    : '待人工确认';
+  $('file-review-warning').textContent = typeof confidence === 'number' && confidence < 0.7
+    ? '识别结果可能存在误差，请先核对关键数字。确认前，这张图片不会进入经营诊断。'
+    : '请先确认识别内容，尤其是营业额、成本、订单量等关键数字。确认前，这张图片不会进入经营诊断。';
+  $('file-review-text').textContent = String(result.document?.text || '').trim() || '没有提取到可展示的文字，请重新上传更清晰的图片。';
+  $('file-review').hidden = false;
+  $('file-status').textContent = imageReviewStatusText(result);
+  $('file-errors').textContent = summarizeFileIssues(result);
+}
+
 function resetUploadedFileState() {
   state.originalFile = null;
   state.originalBase64 = '';
   state.audit = null;
+  clearPendingFileReview();
   state.diagnosis.documents = [];
   state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && item.startsWith('file_analysis:')));
   updateDownloadState();
@@ -495,7 +531,7 @@ async function postFileAnalysisStream(file, contentBase64, { signal, onProgress 
   return readAnalysisStream(response, onProgress);
 }
 
-function applySuccessfulFileAnalysis(file, contentBase64, result) {
+function commitSuccessfulFileAnalysis(file, contentBase64, result) {
   if (result.document.type === 'excel') {
     state.originalFile = file;
     state.originalBase64 = contentBase64;
@@ -514,10 +550,38 @@ function applySuccessfulFileAnalysis(file, contentBase64, result) {
   saveSession();
 }
 
+function applySuccessfulFileAnalysis(file, contentBase64, result) {
+  if (result.document?.type === 'image') {
+    renderFileReview(file, contentBase64, result);
+    return;
+  }
+  clearPendingFileReview();
+  commitSuccessfulFileAnalysis(file, contentBase64, result);
+}
+
+function confirmPendingFileReview() {
+  const pending = state.pendingFileReview;
+  if (!pending) return;
+  state.pendingFileReview = null;
+  hideFileReview();
+  commitSuccessfulFileAnalysis(pending.file, pending.contentBase64, pending.result);
+  $('file-status').textContent = `${fileStatusText(pending.result)} 已确认识别内容。`;
+}
+
+function replacePendingFileReview() {
+  if (!state.pendingFileReview) return;
+  clearPendingFileReview();
+  $('file-status').textContent = '未使用刚才的图片识别结果，请重新选择经营资料。';
+  $('file-errors').textContent = '';
+  $('workbook').value = '';
+  $('workbook').click();
+}
+
 async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
   if (!file || state.fileAnalysisController) return;
   const capturedDiagnosisId = state.diagnosis.id;
   const previousDocument = state.diagnosis.documents[0] || null;
+  clearPendingFileReview();
   state.pendingFile = file;
   $('file-errors').textContent = '';
 
@@ -562,7 +626,7 @@ async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
     state.pendingFile = null;
     state.fileResumeAfterBackground = false;
     state.fileBackgroundRetryCount = 0;
-    setFileProgress(100, '分析完成');
+    setFileProgress(100, result.document?.type === 'image' ? '识别完成，等待确认' : '分析完成');
     setFileProgressActions({ analyzing:false, retry:false });
   } catch (error) {
     if (state.diagnosis.id !== capturedDiagnosisId) return;
@@ -664,6 +728,8 @@ $('retry-file').addEventListener('click', () => {
   state.fileBackgroundRetryCount = 0;
   retryPendingFile();
 });
+$('confirm-file').addEventListener('click', confirmPendingFileReview);
+$('replace-file').addEventListener('click', replacePendingFileReview);
 $('download-excel').addEventListener('click', downloadReport);
 
 document.addEventListener('visibilitychange', () => {

@@ -5,8 +5,19 @@ import { createBundledImageOcr } from '../../src/documents/ocr.js';
 
 const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
-function workerResult(text = '营业额 88', confidence = 91) {
-  return { data:{ text, confidence } };
+function workerResult(text = '营业额 88', confidence = 91, blocks = null) {
+  return { data:{ text, confidence, blocks } };
+}
+
+function blockWithWords(words) {
+  return [{
+    paragraphs:[{
+      lines:[{
+        text:words.map((word) => word.text).join(' '),
+        words
+      }]
+    }]
+  }];
 }
 
 test('ships only the simplified-Chinese traineddata needed for Chinese business screenshots', () => {
@@ -41,6 +52,45 @@ test('uses one simplified-Chinese worker with bundled local langPath and termina
   assert.equal(receivedOptions.cachePath, '/tmp/zhenduan-local-tessdata');
   assert.equal(terminateCount, 1);
   assert.equal(progress.length, 1);
+});
+
+test('requests block output and returns concrete low-confidence words for review', async () => {
+  let recognizeArgs;
+  const imageOcr = createBundledImageOcr({
+    prepareTessdata: async () => '/tmp/local-tessdata',
+    createWorker: async () => ({
+      async recognize(...args) {
+        recognizeArgs = args;
+        return workerResult('营业额 2865O\n客单价 38.5', 47, blockWithWords([
+          { text:'营业额', confidence:93 },
+          { text:'2865O', confidence:31 },
+          { text:'客单价', confidence:90 },
+          { text:'38.5', confidence:84 }
+        ]));
+      },
+      async terminate() {}
+    })
+  });
+
+  const result = await imageOcr(Buffer.from('image'));
+
+  assert.deepEqual(recognizeArgs?.[2], { blocks:true });
+  assert.deepEqual(result.uncertainSegments, [
+    { text:'2865O', confidence:0.31, context:'营业额 2865O 客单价 38.5' }
+  ]);
+});
+
+test('does not invent uncertain segments when block details are unavailable', async () => {
+  const imageOcr = createBundledImageOcr({
+    prepareTessdata: async () => '/tmp/local-tessdata',
+    createWorker: async () => ({
+      async recognize() { return workerResult('营业额 88', 47, null); },
+      async terminate() {}
+    })
+  });
+
+  const result = await imageOcr(Buffer.from('image'));
+  assert.deepEqual(result.uncertainSegments, []);
 });
 
 test('sequential image requests reuse local traineddata but create fresh workers', async () => {

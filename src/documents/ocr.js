@@ -7,6 +7,8 @@ const DEFAULT_TESSDATA_DIR = process.env.TESSERACT_CACHE_PATH || '/tmp/zhenduan-
 const DEFAULT_WORKER_INIT_TIMEOUT_MS = 20_000;
 const DEFAULT_NODE_WORKER_PATH = require.resolve('tesseract.js/src/worker-script/node/index.js');
 const DEFAULT_CORE_PATH = path.dirname(require.resolve('tesseract.js-core'));
+const UNCERTAIN_WORD_CONFIDENCE = 65;
+const MAX_UNCERTAIN_SEGMENTS = 12;
 let bundledTessdataPromise = null;
 
 function bundledLanguageSource() {
@@ -65,6 +67,32 @@ async function createWorkerWithTimeout(createWorker, options, timeoutMs) {
   }
 }
 
+function extractUncertainSegments(blocks) {
+  if (!Array.isArray(blocks)) return [];
+  const segments = [];
+
+  for (const block of blocks) {
+    for (const paragraph of block?.paragraphs || []) {
+      for (const line of paragraph?.lines || []) {
+        const words = Array.isArray(line?.words) ? line.words : [];
+        const context = String(line?.text || words.map((word) => word?.text || '').join(' ')).replace(/\s+/g, ' ').trim();
+        for (const word of words) {
+          const text = String(word?.text || '').trim();
+          const confidence = Number(word?.confidence);
+          if (!text || !Number.isFinite(confidence) || confidence >= UNCERTAIN_WORD_CONFIDENCE) continue;
+          segments.push({
+            text:text.slice(0, 80),
+            confidence:Math.max(0, Math.min(1, confidence / 100)),
+            context:context.slice(0, 180)
+          });
+          if (segments.length >= MAX_UNCERTAIN_SEGMENTS) return segments;
+        }
+      }
+    }
+  }
+  return segments;
+}
+
 export function createBundledImageOcr({
   createWorker: injectedCreateWorker,
   prepareTessdata = prepareBundledTessdata,
@@ -93,10 +121,11 @@ export function createBundledImageOcr({
         gzip:true,
         logger:(message) => reportProgress?.(message)
       }, workerInitTimeoutMs);
-      const result = await worker.recognize(buffer);
+      const result = await worker.recognize(buffer, {}, { blocks:true });
       return {
         text:String(result.data?.text || '').trim(),
-        confidence:Math.max(0, Math.min(1, Number(result.data?.confidence || 0) / 100))
+        confidence:Math.max(0, Math.min(1, Number(result.data?.confidence || 0) / 100)),
+        uncertainSegments:extractUncertainSegments(result.data?.blocks)
       };
     } finally {
       if (worker) {
