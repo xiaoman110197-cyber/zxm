@@ -9,7 +9,7 @@ const css = await readFile(new URL('../../public/styles.css', import.meta.url), 
 test('image OCR requires merchant confirmation before the document enters diagnosis', () => {
   assert.match(html, /id="file-review"/);
   assert.match(html, /id="file-review-text"/);
-  assert.match(html, /id="file-review-issues"/);
+  assert.match(html, /id="file-errors"/);
   assert.match(html, /id="confirm-file"/);
   assert.match(html, /id="replace-file"/);
   assert.match(html, /确认无误/);
@@ -17,9 +17,8 @@ test('image OCR requires merchant confirmation before the document enters diagno
 
   assert.match(js, /pendingFileReview/);
   assert.match(js, /renderFileReview/);
-  assert.match(js, /renderOcrReviewIssues/);
-  assert.match(js, /uncertainSegments/);
-  assert.match(js, /需确认的位置/);
+  assert.match(js, /summarizeFileIssues/);
+  assert.match(js, /识别提示：/);
   assert.match(js, /confirmPendingFileReview/);
   assert.match(js, /document\?*\.type\s*===\s*['"]image['"]/);
   assert.match(js, /识别结果可能存在误差/);
@@ -36,5 +35,4 @@ test('image OCR requires merchant confirmation before the document enters diagno
 
   assert.match(css, /file-review/);
   assert.match(css, /file-review-text/);
-  assert.match(css, /file-review-issues/);
 });
