@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDeepSeekProvider, createOpenAIProvider } from '../../src/ai/providers.js';
 
-test('deepseek provider uses official chat completions endpoint and v4 flash by default', async () => {
+test('deepseek provider uses official chat completions endpoint and bounded output by default', async () => {
   let request;
   const fetchImpl = async (url, init) => {
     request = { url, init, body: JSON.parse(init.body) };
@@ -14,30 +14,44 @@ test('deepseek provider uses official chat completions endpoint and v4 flash by 
   assert.equal(request.body.model, 'deepseek-v4-flash');
   assert.equal(request.init.headers.Authorization, 'Bearer test-key');
   assert.equal(request.body.response_format.type, 'json_object');
+  assert.equal(request.body.max_tokens, 1800);
+  assert.ok(request.init.signal instanceof AbortSignal);
   assert.equal(result.mode, 'question');
 });
 
-test('deepseek provider can use v4 pro for review', async () => {
-  let model;
+test('deepseek provider can use v4 pro and smaller review budget', async () => {
+  let body;
   const fetchImpl = async (_url, init) => {
-    model = JSON.parse(init.body).model;
+    body = JSON.parse(init.body);
     return { ok: true, json: async () => ({ choices: [{ message: { content: '{"reviews":[]}' } }] }) };
   };
   const provider = createDeepSeekProvider({ apiKey: 'k', model: 'deepseek-v4-pro', fetchImpl });
   await provider.review({ findings: [] });
-  assert.equal(model, 'deepseek-v4-pro');
+  assert.equal(body.model, 'deepseek-v4-pro');
+  assert.equal(body.max_tokens, 1000);
 });
 
-test('openai provider targets responses api and parses output_text', async () => {
-  let url;
-  const fetchImpl = async (requestUrl) => {
-    url = requestUrl;
+test('openai provider targets responses api, disables storage and bounds output', async () => {
+  let request;
+  const fetchImpl = async (url, init) => {
+    request = { url, init, body:JSON.parse(init.body) };
     return { ok: true, json: async () => ({ output_text: '{"mode":"finding","question":null,"findings":[]}' }) };
   };
   const provider = createOpenAIProvider({ apiKey: 'openai-key', fetchImpl, model: 'gpt-5-mini' });
   const result = await provider.diagnose({ id: 'd1' });
-  assert.equal(url, 'https://api.openai.com/v1/responses');
+  assert.equal(request.url, 'https://api.openai.com/v1/responses');
+  assert.equal(request.body.store, false);
+  assert.equal(request.body.max_output_tokens, 1800);
+  assert.ok(request.init.signal instanceof AbortSignal);
   assert.equal(result.mode, 'finding');
+});
+
+test('provider aborts a diagnosis request after its explicit timeout', async () => {
+  const fetchImpl = async (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(init.signal.reason || new Error('aborted')), { once:true });
+  });
+  const provider = createDeepSeekProvider({ apiKey:'k', fetchImpl, diagnosisTimeoutMs:5 });
+  await assert.rejects(() => provider.diagnose({ id:'slow' }), /timeout|abort/i);
 });
 
 test('provider fails clearly when api key is missing', () => {
