@@ -107,21 +107,22 @@ test('future production date is an anomaly, because report context may be foreca
   assert.equal(issue.kind, 'anomaly');
 });
 
-test('recomputes a summary gross margin from row revenue and cost instead of adding percentages', () => {
+test('does not invent an exact summary gross margin from partial detail rows', () => {
   const issues = inspectReportFacts([
     fact('r1','华南大区','营收',9800,'万元'), fact('c1','华南大区','营业成本',6100,'万元'),
     fact('r2','华北大区','营收',8000,'万元'), fact('c2','华北大区','营业成本',5000,'万元'),
     fact('sum','财务汇总行','总毛利率',182.5,'%')
   ]);
-  const issue = issues.find((x) => x.title === '总毛利率计算错误');
-  assert.equal(issue.kind, 'calculation_error');
-  assert.equal(issue.correctedValue, 37.64);
+  const issue = issues.find((x) => x.title === '总毛利率异常');
+  assert.equal(issue.kind, 'logic_error');
+  assert.equal('correctedValue' in issue, false);
+  assert.match(issue.explanation, /不能.*直接相加|完整.*汇总/);
 });
 
-test('recomputes summary gross margin across mixed currency units', () => {
+test('corrects summary gross margin only when explicit summary revenue and cost prove it', () => {
   const issues = inspectReportFacts([
-    fact('r1','华南大区','营收',1,'亿元'), fact('c1','华南大区','营业成本',5000,'万元'),
-    fact('r2','华北大区','营收',8000,'万元'), fact('c2','华北大区','营业成本',4000,'万元'),
+    fact('r','财务汇总行','总营收',1.8,'亿元'),
+    fact('c','财务汇总行','总营业成本',9000,'万元'),
     fact('sum','财务汇总行','总毛利率',182.5,'%')
   ]);
   const issue = issues.find((x) => x.title === '总毛利率计算错误');
