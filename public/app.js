@@ -16,6 +16,7 @@ const state = {
   audit: null,
   pendingDiagnosisRequest: false,
   diagnosisRequestInFlight: false,
+  diagnosisRequestController: null,
   pendingFile: null,
   fileAnalysisController: null,
   fileElapsedTimer: null,
@@ -138,8 +139,8 @@ function errorWithRequestId(message, requestId) {
   return requestId ? `${message}（错误编号：${requestId}）` : message;
 }
 
-async function postJson(url, body) {
-  const response = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body) });
+async function postJson(url, body, { signal } = {}) {
+  const response = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(body), signal });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.error || `请求失败 (${response.status})`);
@@ -159,6 +160,9 @@ function diagnosisErrorMessage(error) {
 
 async function requestDiagnosis() {
   if (state.diagnosisRequestInFlight) return;
+  const capturedDiagnosisId = state.diagnosis.id;
+  const controller = new AbortController();
+  state.diagnosisRequestController = controller;
   state.diagnosisRequestInFlight = true;
   state.pendingDiagnosisRequest = false;
   $('request-error').textContent = '';
@@ -168,7 +172,8 @@ async function requestDiagnosis() {
   $('send').textContent = '正在判断…';
 
   try {
-    const result = await postJson('/api/diagnosis', { diagnosis:state.diagnosis });
+    const result = await postJson('/api/diagnosis', { diagnosis:state.diagnosis }, { signal:controller.signal });
+    if (controller.signal.aborted || state.diagnosis.id !== capturedDiagnosisId) return;
     if (result.mode === 'question') {
       const reason = result.question.reason || '';
       appendDialogue(result.question.question, 'ai', reason);
@@ -181,14 +186,18 @@ async function requestDiagnosis() {
     state.pendingDiagnosisRequest = false;
     saveSession();
   } catch (error) {
+    if (controller.signal.aborted || error?.name === 'AbortError' || state.diagnosis.id !== capturedDiagnosisId) return;
     state.pendingDiagnosisRequest = true;
     $('retry-diagnosis').hidden = false;
     $('request-error').textContent = diagnosisErrorMessage(error);
     saveSession();
   } finally {
-    state.diagnosisRequestInFlight = false;
-    $('send').disabled = false;
-    $('send').textContent = state.turn ? '继续诊断' : previousLabel;
+    if (state.diagnosisRequestController === controller) {
+      state.diagnosisRequestController = null;
+      state.diagnosisRequestInFlight = false;
+      $('send').disabled = false;
+      $('send').textContent = state.turn ? '继续诊断' : previousLabel;
+    }
   }
 }
 
@@ -207,8 +216,17 @@ async function sendDiagnosis() {
   await requestDiagnosis();
 }
 
+function stopFileElapsedTimer() {
+  if (state.fileElapsedTimer) clearInterval(state.fileElapsedTimer);
+  state.fileElapsedTimer = null;
+}
+
 function resetDiagnosisExperience() {
+  state.diagnosisRequestController?.abort();
   state.fileAnalysisController?.abort();
+  state.diagnosisRequestController = null;
+  state.fileAnalysisController = null;
+  stopFileElapsedTimer();
   state.diagnosis = newDiagnosis();
   state.turn = 0;
   state.pendingDiagnosisRequest = false;
@@ -217,6 +235,8 @@ function resetDiagnosisExperience() {
   state.originalFile = null;
   state.originalBase64 = '';
   state.audit = null;
+  state.fileAnalysisStartedAt = 0;
+  state.fileProgressPercent = 0;
   $('conversation').replaceChildren();
   $('owner-input').value = '';
   $('request-error').textContent = '';
@@ -284,12 +304,14 @@ function summarizeFileIssues(result) {
 function fileStatusText(result) {
   const summary = result.summary || {};
   const type = fileTypeLabel(result.document?.type);
-  const issueText = `数据质量问题 ${summary.errorCount || 0} 个，经营异常 ${summary.anomalyCount || 0} 个`;
+  const businessAnomalyText = summary.anomalyCount > 0
+    ? `程序识别到经营异常 ${summary.anomalyCount} 个`
+    : '经营异常将在问诊中结合经营背景继续判断';
   if (result.document?.structured) {
-    return `已读取 ${type}：${summary.sheetCount || 0} 个表，${summary.rowCount || 0} 行数据；${issueText}。`;
+    return `已读取 ${type}：${summary.sheetCount || 0} 个表，${summary.rowCount || 0} 行数据；数据质量问题 ${summary.errorCount || 0} 个；${businessAnomalyText}。资料已加入本次问诊。`;
   }
   const confidence = typeof summary.confidence === 'number' ? `，识别置信度 ${Math.round(summary.confidence * 100)}%` : '';
-  return `已读取 ${type}：提取 ${summary.textLength || 0} 个字符${confidence}；${issueText}。`;
+  return `已读取 ${type}：提取 ${summary.textLength || 0} 个字符${confidence}；${businessAnomalyText}。资料已加入本次问诊。`;
 }
 
 function resetUploadedFileState() {
@@ -299,11 +321,6 @@ function resetUploadedFileState() {
   state.diagnosis.documents = [];
   state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && item.startsWith('file_analysis:')));
   updateDownloadState();
-}
-
-function stopFileElapsedTimer() {
-  if (state.fileElapsedTimer) clearInterval(state.fileElapsedTimer);
-  state.fileElapsedTimer = null;
 }
 
 function renderFileElapsed() {
@@ -369,6 +386,7 @@ async function readAnalysisStream(response, onProgress) {
     const data = await response.json().catch(() => ({}));
     const error = new Error(data.error || `文件分析请求失败 (${response.status})`);
     error.requestId = data.requestId || '';
+    error.status = response.status;
     throw error;
   }
 
@@ -435,6 +453,7 @@ function applySuccessfulFileAnalysis(file, contentBase64, result) {
 }
 
 async function analyzeBusinessFile(file) {
+  const capturedDiagnosisId = state.diagnosis.id;
   const previousDocument = state.diagnosis.documents[0] || null;
   state.pendingFile = file;
   $('file-errors').textContent = '';
@@ -465,23 +484,30 @@ async function analyzeBusinessFile(file) {
       signal:controller.signal,
       onProgress:(event) => setFileProgress(event?.percent, event?.message)
     });
+    if (controller.signal.aborted || state.diagnosis.id !== capturedDiagnosisId) return;
 
     applySuccessfulFileAnalysis(file, contentBase64, result);
     state.pendingFile = null;
     setFileProgress(100, '分析完成');
     setFileProgressActions({ analyzing:false, retry:false });
   } catch (error) {
+    if (state.diagnosis.id !== capturedDiagnosisId) return;
     const cancelled = error?.name === 'AbortError';
-    const baseMessage = cancelled ? '已取消分析。' : errorWithRequestId(`文件分析失败：${error.message}`, error.requestId);
+    let baseMessage;
+    if (cancelled) baseMessage = '已取消分析。';
+    else if (error.status === 429) baseMessage = errorWithRequestId('文件分析请求较频繁，请稍后再试。', error.requestId);
+    else baseMessage = errorWithRequestId(`文件分析失败：${error.message}`, error.requestId);
     const keepMessage = previousDocument ? ' 此前成功分析的资料仍保留。' : '';
     $('file-errors').textContent = `${baseMessage}${keepMessage}`;
     $('file-progress-message').textContent = cancelled ? '分析已取消，可重新分析' : '分析已中断，可重新分析';
     setFileProgressActions({ analyzing:false, retry:Boolean(state.pendingFile) });
   } finally {
-    stopFileElapsedTimer();
-    renderFileElapsed();
-    $('workbook').disabled = false;
-    if (state.fileAnalysisController === controller) state.fileAnalysisController = null;
+    if (state.fileAnalysisController === controller) {
+      stopFileElapsedTimer();
+      renderFileElapsed();
+      $('workbook').disabled = false;
+      state.fileAnalysisController = null;
+    }
   }
 }
 
