@@ -12,33 +12,31 @@ function newDiagnosis() {
 }
 
 const state = {
-  diagnosis: newDiagnosis(),
-  turn: 0,
-  originalFile: null,
-  originalBase64: '',
-  audit: null,
-  pendingDiagnosisRequest: false,
-  diagnosisRequestInFlight: false,
-  diagnosisRequestController: null,
-  pendingFile: null,
-  pendingFileReview: null,
-  fileAnalysisController: null,
-  fileElapsedTimer: null,
-  fileAnalysisStartedAt: 0,
-  fileProgressPercent: 0,
-  fileResumeAfterBackground: false,
-  fileBackgroundRetryCount: 0
+  diagnosis:newDiagnosis(),
+  turn:0,
+  originalFile:null,
+  originalBase64:'',
+  audit:null,
+  pendingDiagnosisRequest:false,
+  diagnosisRequestInFlight:false,
+  diagnosisRequestController:null,
+  pendingFile:null,
+  pendingFileReview:null,
+  fileAnalysisController:null,
+  fileElapsedTimer:null,
+  fileAnalysisStartedAt:0,
+  fileProgressPercent:0,
+  fileResumeAfterBackground:false,
+  fileBackgroundRetryCount:0
 };
 
 function renderBubble(text, who, reason = '') {
   const node = document.createElement('div');
   node.className = `bubble ${who}`;
-
   const textNode = document.createElement('div');
   textNode.className = 'bubble-text';
   textNode.textContent = text;
   node.append(textNode);
-
   if (who === 'ai' && reason) {
     const details = document.createElement('details');
     details.className = 'bubble-reason';
@@ -61,13 +59,11 @@ function appendDialogue(text, who, reason = '') {
 
 function renderConversation() {
   $('conversation').replaceChildren();
-  for (const entry of state.diagnosis.dialogue || []) {
-    renderBubble(entry.text, entry.who, entry.reason || '');
-  }
+  for (const entry of state.diagnosis.dialogue || []) renderBubble(entry.text, entry.who, entry.reason || '');
 }
 
 function findingLabel(status) {
-  return ({ confirmed: '事实', probable: '高概率', hypothesis: '待验证' })[status] || '待验证';
+  return ({ confirmed:'事实', probable:'高概率', hypothesis:'待验证' })[status] || '待验证';
 }
 
 function updateDownloadState() {
@@ -85,7 +81,6 @@ function renderFindings(findings) {
     updateDownloadState();
     return;
   }
-
   for (const finding of findings) {
     const card = document.createElement('article');
     card.className = 'finding';
@@ -121,12 +116,7 @@ function restoreSession() {
       return false;
     }
     state.turn = restored.turn;
-    state.diagnosis = {
-      ...restored.diagnosis,
-      evidence: [],
-      documents: [],
-      dialogue: restored.diagnosis.dialogue || []
-    };
+    state.diagnosis = { ...restored.diagnosis, evidence:[], documents:[], dialogue:restored.diagnosis.dialogue || [] };
     renderConversation();
     renderFindings(state.diagnosis.findings);
     $('session-status').textContent = '已恢复上次文字问诊。上传资料不会从本地草稿恢复，如需继续使用请重新选择文件。';
@@ -176,7 +166,6 @@ async function requestDiagnosis() {
   $('send').disabled = true;
   const previousLabel = $('send').textContent;
   $('send').textContent = '正在判断…';
-
   try {
     const result = await postJson('/api/diagnosis', { diagnosis:state.diagnosis }, { signal:controller.signal });
     if (controller.signal.aborted || state.diagnosis.id !== capturedDiagnosisId) return;
@@ -233,6 +222,7 @@ function clearNode(id) {
 
 function hideFileReview() {
   $('file-review').hidden = true;
+  clearNode('file-review-lead');
   clearNode('file-review-summary');
   clearNode('file-review-corrections-list');
   clearNode('file-review-important-list');
@@ -345,21 +335,18 @@ function loadBrowserImage(file, signal) {
 async function optimizeImageForOcr(file, { signal } = {}) {
   if (!isImageFile(file)) return file;
   if (file.size > MAX_SOURCE_IMAGE_BYTES) throw new Error('图片过大，请先裁剪后再上传');
-
   const image = await loadBrowserImage(file, signal);
   const width = image.naturalWidth || image.width;
   const height = image.naturalHeight || image.height;
   const longest = Math.max(width, height);
-  if (!width || !height || longest <= MAX_OCR_IMAGE_DIMENSION) return file;
-
-  const scale = MAX_OCR_IMAGE_DIMENSION / longest;
+  if (!width || !height || (longest <= MAX_OCR_IMAGE_DIMENSION && file.size <= MAX_FILE_BYTES)) return file;
+  const scale = Math.min(1, MAX_OCR_IMAGE_DIMENSION / longest);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(width * scale));
   canvas.height = Math.max(1, Math.round(height * scale));
   const context = canvas.getContext('2d');
   if (!context) return file;
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-
   const outputType = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png';
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, outputType, outputType === 'image/jpeg' ? 0.9 : undefined));
   if (!blob) return file;
@@ -373,12 +360,7 @@ function fileTypeLabel(type) {
 function summarizeFileIssues(result) {
   const counts = new Map();
   const errors = Array.isArray(result.audit?.errors) ? result.audit.errors : [];
-  const labels = {
-    missing_value: '关键字段缺失',
-    duplicate: '重复记录',
-    duplicate_record: '重复记录',
-    cross_sheet_mismatch: '跨表合计不一致'
-  };
+  const labels = { missing_value:'关键字段缺失', duplicate:'重复记录', duplicate_record:'重复记录', cross_sheet_mismatch:'跨表合计不一致' };
   for (const issue of errors) {
     const label = issue.reason || labels[issue.type] || issue.type || '数据问题';
     const scope = [issue.sheet, issue.field].filter(Boolean).join(' / ');
@@ -393,29 +375,27 @@ function summarizeFileIssues(result) {
 function fileStatusText(result) {
   const summary = result.summary || {};
   const type = fileTypeLabel(result.document?.type);
-  const businessAnomalyText = summary.anomalyCount > 0
-    ? `程序识别到经营异常 ${summary.anomalyCount} 个`
-    : '经营异常将在问诊中结合经营背景继续判断';
-  if (result.document?.structured) {
-    return `已读取 ${type}：${summary.sheetCount || 0} 个表，${summary.rowCount || 0} 行数据；${businessAnomalyText}。资料已加入本次问诊。`;
-  }
-  const confidence = typeof summary.confidence === 'number' ? `，图片识别 ${Math.round(summary.confidence * 100)}%` : '';
-  return `已读取 ${type}：提取 ${summary.textLength || 0} 个字符${confidence}；${businessAnomalyText}。资料已加入本次问诊。`;
+  const businessAnomalyText = summary.anomalyCount > 0 ? `程序识别到经营异常 ${summary.anomalyCount} 个` : '经营异常将在问诊中结合经营背景继续判断';
+  if (result.document?.structured) return `已读取 ${type}：${summary.sheetCount || 0} 个表，${summary.rowCount || 0} 行数据；${businessAnomalyText}。资料已加入本次问诊。`;
+  if (result.reportReview) return `已完成报表检查。资料已加入本次问诊。`;
+  return `已读取 ${type}：提取 ${summary.textLength || 0} 个字符；${businessAnomalyText}。资料已加入本次问诊。`;
 }
 
 function imageReviewStatusText(result) {
-  const summary = result.summary || {};
-  const confidence = typeof summary.confidence === 'number' ? `，图片识别 ${Math.round(summary.confidence * 100)}%` : '';
-  return `资料已读取${confidence}。请先看下面需要处理的地方，确认后再用于经营诊断。`;
+  if (result.reportReview) return '报表已检查完成。请先看具体问题和依据，确认后再用于经营诊断。';
+  return '资料已读取。请先确认识别内容，确认后再用于经营诊断。';
 }
 
-function displayValue(label, value) {
+function formatValue(issue, value) {
   if (value === undefined || value === null || value === '') return '—';
   if (typeof value !== 'number' || !Number.isFinite(value)) return String(value);
   const formatted = value.toLocaleString('zh-CN', { maximumFractionDigits:2 });
-  if (/率/.test(label)) return `${formatted}%`;
-  if (/营业额|收入|销售额|成本|毛利|利润|金额|客单价|房租|租金|工资|人工/.test(label)) return `${formatted} 元`;
-  return formatted;
+  const unit = issue?.unit || '';
+  return unit ? `${formatted} ${unit}` : formatted;
+}
+
+function displayValue(label, value) {
+  return formatValue({ unit:/率/.test(label) ? '%' : '' }, value);
 }
 
 function summaryItem(value, label) {
@@ -429,17 +409,138 @@ function summaryItem(value, label) {
   return node;
 }
 
+function reportIssueBadge(issue) {
+  if (issue.kind === 'calculation_error') return '计算错误';
+  if (issue.kind === 'logic_error') return '数据逻辑错误';
+  if (issue.kind === 'anomaly') return '异常，需核对';
+  return '关键数据需核对';
+}
+
+function appendLabeledValue(parent, label, value, className = '') {
+  const row = document.createElement('div');
+  row.className = `report-value-row ${className}`.trim();
+  const key = document.createElement('span');
+  key.textContent = label;
+  const strong = document.createElement('strong');
+  strong.textContent = value;
+  row.append(key, strong);
+  parent.append(row);
+}
+
+function renderReportIssueCard(issue, index) {
+  const card = document.createElement('article');
+  card.className = `report-issue-card report-${issue.kind || 'anomaly'}`;
+  const head = document.createElement('div');
+  head.className = 'report-issue-head';
+  const titleWrap = document.createElement('div');
+  const number = document.createElement('span');
+  number.className = 'report-issue-number';
+  number.textContent = `${index + 1}.`;
+  const title = document.createElement('strong');
+  title.textContent = `${issue.title || '报表问题'}${issue.scope ? `｜${issue.scope}` : ''}`;
+  titleWrap.append(number, title);
+  const badge = document.createElement('span');
+  badge.className = 'report-issue-badge';
+  badge.textContent = reportIssueBadge(issue);
+  head.append(titleWrap, badge);
+  card.append(head);
+
+  const values = document.createElement('div');
+  values.className = 'report-values';
+  if (issue.originalValue !== undefined) appendLabeledValue(values, '原数据', formatValue(issue, issue.originalValue));
+  if (issue.kind === 'calculation_error' && issue.source === 'program' && Object.prototype.hasOwnProperty.call(issue, 'correctedValue')) {
+    appendLabeledValue(values, '正确结果', formatValue(issue, issue.correctedValue), 'report-correct-value');
+  }
+  if (values.childElementCount) card.append(values);
+
+  const explanation = document.createElement('p');
+  explanation.className = 'report-issue-explanation';
+  explanation.textContent = issue.explanation || '请核对原始报表。';
+  card.append(explanation);
+
+  if (Array.isArray(issue.evidence) && issue.evidence.length) {
+    const details = document.createElement('details');
+    details.className = 'report-evidence';
+    const summary = document.createElement('summary');
+    summary.textContent = '查看计算/判断依据';
+    const list = document.createElement('ul');
+    for (const item of issue.evidence.slice(0, 8)) {
+      const li = document.createElement('li');
+      li.textContent = item;
+      list.append(li);
+    }
+    details.append(summary, list);
+    card.append(details);
+  }
+  return card;
+}
+
+function renderReportReview(file, contentBase64, result) {
+  const review = result.reportReview || { issues:[], summary:{} };
+  const issues = Array.isArray(review.issues) ? review.issues : [];
+  const confirmedIssues = issues.filter((item) => item.kind !== 'needs_confirmation');
+  const confirmations = issues.filter((item) => item.kind === 'needs_confirmation');
+  state.pendingFileReview = { file, contentBase64, result, mode:'report', correctionDecisions:{} };
+
+  $('file-review-confidence').textContent = review.summary?.visionAvailable ? '已读取原图并复算' : '仅使用可验证数据';
+  const lead = $('file-review-lead');
+  lead.replaceChildren();
+  const headline = document.createElement('strong');
+  const problemCount = Number(review.summary?.problemCount) || confirmedIssues.length;
+  const correctionCount = Number(review.summary?.provableCorrectionCount) || confirmedIssues.filter((item) => item.kind === 'calculation_error').length;
+  const confirmationCount = Number(review.summary?.confirmationCount) || confirmations.length;
+  headline.textContent = problemCount
+    ? `发现 ${problemCount} 处报表问题${correctionCount ? `，其中 ${correctionCount} 处可以确定订正` : ''}`
+    : '暂未发现可以确定的报表错误';
+  lead.append(headline);
+  if (confirmationCount) {
+    const note = document.createElement('span');
+    note.textContent = `另有 ${confirmationCount} 个关键数据需要核对，不会当成确定事实。`;
+    lead.append(note);
+  }
+
+  const summary = $('file-review-summary');
+  summary.replaceChildren();
+  summary.append(summaryItem(`${problemCount} 处`, '发现的问题'));
+  summary.append(summaryItem(`${correctionCount} 处`, '可以确定订正'));
+  summary.append(summaryItem(`${confirmationCount} 个`, '关键数据待核对'));
+
+  const problemList = $('file-review-corrections-list');
+  problemList.replaceChildren();
+  confirmedIssues.forEach((issue, index) => problemList.append(renderReportIssueCard(issue, index)));
+  $('file-review-corrections').hidden = confirmedIssues.length === 0;
+
+  const confirmationList = $('file-review-important-list');
+  confirmationList.replaceChildren();
+  confirmations.forEach((issue, index) => confirmationList.append(renderReportIssueCard(issue, index)));
+  $('file-review-important').hidden = confirmations.length === 0;
+
+  $('file-review-other').hidden = true;
+  $('file-review-other').open = false;
+  $('file-review-text').textContent = String(result.document?.text || '').trim() || '没有可展示的文字识别详情。';
+  $('file-review-fulltext').hidden = !String(result.document?.text || '').trim();
+  $('file-review-fulltext').open = false;
+
+  if (review.summary?.visionWarning) {
+    $('file-review-warning').textContent = `${review.summary.visionWarning}。本次不会把无法证明的内容当成确定错误。`;
+  } else if (confirmationCount) {
+    $('file-review-warning').textContent = '待核对的数据不会作为确定事实；其余有明确依据的问题可以继续用于经营诊断。';
+  } else {
+    $('file-review-warning').textContent = '只有程序能够复算或明确验证的内容，才会显示“正确结果”。';
+  }
+  $('confirm-file').disabled = false;
+  $('file-review').hidden = false;
+  $('file-errors').textContent = '';
+  $('file-status').textContent = imageReviewStatusText(result);
+}
+
 function plainAuditIssues(result) {
   const issues = [];
   for (const issue of result.audit?.errors || []) {
     if (issue.type === 'cross_sheet_mismatch' || issue.type === 'cross_sheet_total_mismatch') continue;
-    if (issue.type === 'missing_value') {
-      issues.push({ text:`${issue.field || '关键字段'}可能漏填`, context:`${issue.sheet || '表格'}${issue.row ? `第 ${issue.row} 行` : ''}，请确认是否需要补充。` });
-    } else if (issue.type === 'duplicate' || issue.type === 'duplicate_record') {
-      issues.push({ text:'发现可能重复的数据', context:`${issue.sheet || '表格'}${issue.row ? `第 ${issue.row} 行` : ''}${issue.duplicateOf ? `与第 ${issue.duplicateOf} 行内容相同` : ''}，请确认是否重复录入。` });
-    } else {
-      issues.push({ text:'发现一处数据需要确认', context:issue.reason || [issue.sheet, issue.field].filter(Boolean).join(' / ') || '请核对原资料。' });
-    }
+    if (issue.type === 'missing_value') issues.push({ text:`${issue.field || '关键字段'}可能漏填`, context:`${issue.sheet || '表格'}${issue.row ? `第 ${issue.row} 行` : ''}，请确认是否需要补充。` });
+    else if (issue.type === 'duplicate' || issue.type === 'duplicate_record') issues.push({ text:'发现可能重复的数据', context:`${issue.sheet || '表格'}${issue.row ? `第 ${issue.row} 行` : ''}，请确认是否重复录入。` });
+    else issues.push({ text:'发现一处数据需要确认', context:issue.reason || '请核对原资料。' });
   }
   return issues;
 }
@@ -468,12 +569,6 @@ function renderIssueCard(issue, { badge = '需要确认' } = {}) {
     context.textContent = `所在内容：${issue.context}`;
     card.append(context);
   }
-  if (typeof issue.confidence === 'number') {
-    const confidence = document.createElement('div');
-    confidence.className = 'review-context';
-    confidence.textContent = `这个位置识别可信度约 ${Math.round(issue.confidence * 100)}%`;
-    card.append(confidence);
-  }
   return card;
 }
 
@@ -481,7 +576,6 @@ function renderCorrectionCard(correction, index) {
   const card = document.createElement('article');
   card.className = 'review-correction-card';
   card.dataset.correctionIndex = String(index);
-
   const head = document.createElement('div');
   head.className = 'review-card-title';
   const title = document.createElement('strong');
@@ -490,30 +584,20 @@ function renderCorrectionCard(correction, index) {
   badge.className = 'review-card-badge';
   badge.textContent = '可以确定';
   head.append(title, badge);
-
   const values = document.createElement('div');
   values.className = 'review-values';
   const original = document.createElement('div');
   original.className = 'review-value';
-  const originalLabel = document.createElement('span');
-  originalLabel.textContent = '原数据';
-  const originalValue = document.createElement('strong');
-  originalValue.textContent = displayValue(correction.label, correction.originalValue);
-  original.append(originalLabel, originalValue);
-
+  original.innerHTML = '<span>原数据</span><strong></strong>';
+  original.querySelector('strong').textContent = displayValue(correction.label, correction.originalValue);
   const corrected = document.createElement('div');
   corrected.className = 'review-value review-correct-value';
-  const correctedLabel = document.createElement('span');
-  correctedLabel.textContent = '正确结果';
-  const correctedValue = document.createElement('strong');
-  correctedValue.textContent = displayValue(correction.label, correction.correctedValue);
-  corrected.append(correctedLabel, correctedValue);
+  corrected.innerHTML = '<span>正确结果</span><strong></strong>';
+  corrected.querySelector('strong').textContent = displayValue(correction.label, correction.correctedValue);
   values.append(original, corrected);
-
   const copy = document.createElement('p');
   copy.className = 'review-card-copy';
   copy.textContent = correction.explanation || '根据资料中的明确数字重新计算得到。';
-
   const actions = document.createElement('div');
   actions.className = 'review-correction-actions';
   for (const [choice, text] of [['accept','采用正确值'],['keep','保留原数据']]) {
@@ -524,86 +608,59 @@ function renderCorrectionCard(correction, index) {
     button.textContent = text;
     actions.append(button);
   }
-
   card.append(head, values, copy, actions);
   return card;
 }
 
 function updateReviewConfirmState() {
   const pending = state.pendingFileReview;
-  if (!pending) return;
+  if (!pending || pending.mode === 'report') return;
   const proven = (pending.result.corrections || []).filter((item) => item.kind === 'calculation_error');
   const decided = proven.filter((_, index) => pending.correctionDecisions[index]).length;
-  if (!pending.reviewModel.hasText && pending.result.document?.type === 'image') {
-    $('confirm-file').disabled = true;
-    $('file-review-warning').textContent = '没有识别到可用文字，请重新上传更清晰的图片。';
-    return;
-  }
   if (decided < proven.length) {
     $('confirm-file').disabled = true;
     $('file-review-warning').textContent = `还有 ${proven.length - decided} 个计算错误，请先选择“采用正确值”或“保留原数据”。`;
     return;
   }
   $('confirm-file').disabled = false;
-  $('file-review-warning').textContent = pending.result.document?.type === 'image' && (pending.reviewModel.confidence ?? 1) < 0.7
-    ? '识别结果可能存在误差，请先确认识别内容。确认后，这份资料才会用于经营诊断。'
-    : '请先确认识别内容。确认后，这份资料才会用于经营诊断。';
+  $('file-review-warning').textContent = '请先确认识别内容。确认后，这份资料才会用于经营诊断。';
+}
+
+function renderLegacyFileReview(file, contentBase64, result) {
+  const reviewModel = buildFileReviewModel(result);
+  state.pendingFileReview = { file, contentBase64, result, reviewModel, mode:'legacy', correctionDecisions:{} };
+  const corrections = Array.isArray(result.corrections) ? result.corrections : [];
+  const provenCorrections = corrections.filter((item) => item.kind === 'calculation_error');
+  const mainIssues = [
+    ...corrections.filter((item) => item.kind !== 'calculation_error').map((item) => ({ text:item.label || '数据需要确认', explanation:item.explanation, context:Array.isArray(item.evidence) ? item.evidence.join('；') : '' })),
+    ...plainAuditIssues(result)
+  ];
+  $('file-review-confidence').textContent = '资料已读取';
+  $('file-review-lead').textContent = '系统先检查能确定的数据问题，再进入经营诊断。';
+  const summary = $('file-review-summary');
+  summary.replaceChildren();
+  summary.append(summaryItem(`${result.summary?.rowCount || 0} 行`, '已读取数据'));
+  summary.append(summaryItem(`${provenCorrections.length} 个`, '确定的计算错误'));
+  summary.append(summaryItem(`${mainIssues.length} 处`, '需要确认'));
+  const correctionsList = $('file-review-corrections-list');
+  correctionsList.replaceChildren();
+  provenCorrections.forEach((item, index) => correctionsList.append(renderCorrectionCard(item, index)));
+  $('file-review-corrections').hidden = provenCorrections.length === 0;
+  const importantList = $('file-review-important-list');
+  importantList.replaceChildren();
+  mainIssues.forEach((item) => importantList.append(renderIssueCard(item)));
+  $('file-review-important').hidden = mainIssues.length === 0;
+  $('file-review-other').hidden = true;
+  $('file-review-fulltext').hidden = true;
+  $('file-review-warning').textContent = '';
+  $('file-review').hidden = false;
+  $('file-errors').textContent = '';
+  updateReviewConfirmState();
 }
 
 function renderFileReview(file, contentBase64, result) {
-  const reviewModel = buildFileReviewModel(result);
-  state.pendingFileReview = { file, contentBase64, result, reviewModel, correctionDecisions:{} };
-  const corrections = Array.isArray(result.corrections) ? result.corrections : [];
-  const provenCorrections = corrections.filter((item) => item.kind === 'calculation_error');
-  const correctionQuestions = corrections.filter((item) => item.kind !== 'calculation_error').map((item) => ({
-    text:item.label || '数据需要确认',
-    explanation:item.explanation,
-    context:Array.isArray(item.evidence) ? item.evidence.join('；') : ''
-  }));
-  const auditIssues = plainAuditIssues(result);
-  const ocrImportant = reviewModel.importantIssues;
-  const mainIssues = [...correctionQuestions, ...auditIssues, ...ocrImportant].slice(0, 5);
-  const overflowMain = [...correctionQuestions, ...auditIssues, ...ocrImportant].slice(5);
-  const otherIssues = [...overflowMain, ...reviewModel.otherIssues];
-
-  $('file-review-confidence').textContent = result.document?.type === 'image' && typeof reviewModel.confidence === 'number'
-    ? `图片识别 ${Math.round(reviewModel.confidence * 100)}%`
-    : '资料已读取';
-
-  const summary = $('file-review-summary');
-  summary.replaceChildren();
-  if (result.document?.structured) summary.append(summaryItem(`${result.summary?.rowCount || 0} 行`, '已读取数据'));
-  else summary.append(summaryItem(`${result.summary?.textLength || 0} 字`, '已读取内容'));
-  summary.append(summaryItem(`${provenCorrections.length} 个`, '确定的计算错误'));
-  summary.append(summaryItem(`${mainIssues.length + otherIssues.length} 处`, '需要人工确认'));
-  if (result.document?.type === 'image' && typeof reviewModel.confidence === 'number') {
-    summary.append(summaryItem(`${Math.round(reviewModel.confidence * 100)}%`, '图片整体识别质量'));
-  }
-
-  const correctionsList = $('file-review-corrections-list');
-  correctionsList.replaceChildren();
-  provenCorrections.forEach((correction, index) => correctionsList.append(renderCorrectionCard(correction, index)));
-  $('file-review-corrections').hidden = provenCorrections.length === 0;
-
-  const importantList = $('file-review-important-list');
-  importantList.replaceChildren();
-  mainIssues.forEach((issue) => importantList.append(renderIssueCard(issue)));
-  $('file-review-important').hidden = mainIssues.length === 0;
-
-  const otherList = $('file-review-other-list');
-  otherList.replaceChildren();
-  otherIssues.forEach((issue) => otherList.append(renderIssueCard(issue, { badge:'次要' })));
-  $('file-review-other-count').textContent = otherIssues.length ? `(${otherIssues.length} 处)` : '';
-  $('file-review-other').hidden = otherIssues.length === 0;
-  $('file-review-other').open = false;
-
-  $('file-review-text').textContent = reviewModel.fullText || '没有提取到可展示的文字。';
-  $('file-review-fulltext').hidden = !reviewModel.hasText;
-  $('file-review-fulltext').open = false;
-  $('file-review').hidden = false;
-  $('file-errors').textContent = '';
-  $('file-status').textContent = imageReviewStatusText(result);
-  updateReviewConfirmState();
+  if (result.reportReview) return renderReportReview(file, contentBase64, result);
+  return renderLegacyFileReview(file, contentBase64, result);
 }
 
 function resetUploadedFileState() {
@@ -613,9 +670,8 @@ function resetUploadedFileState() {
   clearPendingFileReview();
   state.diagnosis.documents = [];
   state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && (
-    item.startsWith('file_analysis:') ||
-    item.startsWith('correction_decision:') ||
-    item.startsWith('file_review:')
+    item.startsWith('file_analysis:') || item.startsWith('correction_decision:') || item.startsWith('file_review:') ||
+    item.startsWith('report_fact:') || item.startsWith('report_issue:') || item.startsWith('report_review_confirmation:')
   )));
   updateDownloadState();
 }
@@ -659,16 +715,12 @@ function parseSseBlock(block) {
     if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
   }
   if (!dataLines.length) return null;
-  const raw = dataLines.join('\n');
-  return { event, data:JSON.parse(raw) };
+  return { event, data:JSON.parse(dataLines.join('\n')) };
 }
 
 function handleAnalysisStreamEvent(parsed, onProgress) {
   if (!parsed) return null;
-  if (parsed.event === 'progress') {
-    onProgress(parsed.data);
-    return null;
-  }
+  if (parsed.event === 'progress') { onProgress(parsed.data); return null; }
   if (parsed.event === 'result') return parsed.data;
   if (parsed.event === 'error') {
     const error = new Error(parsed.data?.error || '文件分析失败');
@@ -686,24 +738,20 @@ async function readAnalysisStream(response, onProgress) {
     error.status = response.status;
     throw error;
   }
-
   const contentType = response.headers.get('content-type') || '';
   if (!contentType.includes('text/event-stream')) return response.json();
-
   let finalResult = null;
   const processBlock = (block) => {
     if (!block.trim()) return;
     const value = handleAnalysisStreamEvent(parseSseBlock(block), onProgress);
     if (value) finalResult = value;
   };
-
   if (!response.body) {
     const text = await response.text();
     for (const block of text.split(/\r?\n\r?\n/)) processBlock(block);
     if (finalResult) return finalResult;
     throw new Error('分析连接提前结束，请重新分析');
   }
-
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let pending = '';
@@ -722,10 +770,7 @@ async function readAnalysisStream(response, onProgress) {
 
 async function postFileAnalysisStream(file, contentBase64, { signal, onProgress }) {
   const response = await fetch('/api/analyze-file?stream=1', {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json' },
-    body:JSON.stringify({ file:{ name:file.name, contentBase64 } }),
-    signal
+    method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ file:{ name:file.name, contentBase64 } }), signal
   });
   return readAnalysisStream(response, onProgress);
 }
@@ -735,26 +780,45 @@ function correctionDecisionEvidence(pending) {
   return corrections.map((correction, index) => {
     const choice = pending.correctionDecisions[index];
     const decision = choice === 'accept' ? 'accepted' : 'kept_original';
-    return `correction_decision:${JSON.stringify({
-      label:correction.label,
-      originalValue:correction.originalValue,
-      correctedValue:correction.correctedValue,
-      decision,
-      explanation:correction.explanation || ''
-    })}`;
+    return `correction_decision:${JSON.stringify({ label:correction.label, originalValue:correction.originalValue, correctedValue:correction.correctedValue, decision, explanation:correction.explanation || '' })}`;
   });
 }
 
 function unresolvedReviewEvidence(result) {
-  return (result?.corrections || [])
-    .filter((item) => item.kind !== 'calculation_error')
-    .map((item) => `file_review:${JSON.stringify({
-      kind:item.kind,
-      label:item.label,
-      originalValue:item.originalValue,
-      explanation:item.explanation || '',
-      evidence:Array.isArray(item.evidence) ? item.evidence : []
-    })}`);
+  return (result?.corrections || []).filter((item) => item.kind !== 'calculation_error').map((item) => `file_review:${JSON.stringify({
+    kind:item.kind, label:item.label, originalValue:item.originalValue, explanation:item.explanation || '', evidence:Array.isArray(item.evidence) ? item.evidence : []
+  })}`);
+}
+
+function reportReviewEvidence(result) {
+  const evidence = [];
+  for (const fact of result.reportFacts || []) {
+    const compact = { id:fact.id, scope:fact.scope, metric:fact.metric, value:fact.value, unit:fact.unit || '', trusted:fact.trusted === true, source:fact.source || 'vision' };
+    if (compact.trusted) evidence.push(`report_fact:${JSON.stringify(compact)}`);
+    else evidence.push(`report_review_confirmation:${JSON.stringify({ ...compact, reason:'关键数据识别存在冲突或不确定，不能作为确定事实' })}`);
+  }
+  for (const issue of result.reportReview?.issues || []) {
+    const compact = {
+      kind:issue.kind, title:issue.title, scope:issue.scope, originalValue:issue.originalValue,
+      unit:issue.unit || '', explanation:issue.explanation || '', evidence:Array.isArray(issue.evidence) ? issue.evidence : [], source:issue.source || 'unknown'
+    };
+    if (issue.kind === 'calculation_error' && issue.source === 'program' && Object.prototype.hasOwnProperty.call(issue, 'correctedValue')) compact.correctedValue = issue.correctedValue;
+    if (issue.kind === 'needs_confirmation') evidence.push(`report_review_confirmation:${JSON.stringify(compact)}`);
+    else evidence.push(`report_issue:${JSON.stringify(compact)}`);
+  }
+  return evidence;
+}
+
+function diagnosisDocument(result) {
+  if (!result.reportReview || result.document?.type !== 'image') return result.document;
+  return {
+    name:result.document.name,
+    type:'image',
+    structured:false,
+    source:result.document.source,
+    confidence:result.document.confidence,
+    warnings:['原始 OCR 全文未作为诊断事实传入；诊断使用已验证的结构化报表事实。']
+  };
 }
 
 function commitSuccessfulFileAnalysis(file, contentBase64, result, reviewEvidence = []) {
@@ -765,13 +829,11 @@ function commitSuccessfulFileAnalysis(file, contentBase64, result, reviewEvidenc
     state.originalFile = null;
     state.originalBase64 = '';
   }
-
   state.audit = result.audit;
-  state.diagnosis.documents = [result.document];
+  state.diagnosis.documents = [diagnosisDocument(result)];
   state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && (
-    item.startsWith('file_analysis:') ||
-    item.startsWith('correction_decision:') ||
-    item.startsWith('file_review:')
+    item.startsWith('file_analysis:') || item.startsWith('correction_decision:') || item.startsWith('file_review:') ||
+    item.startsWith('report_fact:') || item.startsWith('report_issue:') || item.startsWith('report_review_confirmation:')
   )));
   state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`, ...reviewEvidence);
   $('file-status').textContent = fileStatusText(result);
@@ -781,7 +843,7 @@ function commitSuccessfulFileAnalysis(file, contentBase64, result, reviewEvidenc
 }
 
 function requiresFileReview(result) {
-  return Boolean((result.corrections || []).length || (result.audit?.errors || []).length);
+  return Boolean(result.reportReview || (result.corrections || []).length || (result.audit?.errors || []).length);
 }
 
 function applySuccessfulFileAnalysis(file, contentBase64, result) {
@@ -800,10 +862,9 @@ function applySuccessfulFileAnalysis(file, contentBase64, result) {
 function confirmPendingFileReview() {
   const pending = state.pendingFileReview;
   if (!pending || $('confirm-file').disabled) return;
-  const reviewEvidence = [
-    ...correctionDecisionEvidence(pending),
-    ...unresolvedReviewEvidence(pending.result)
-  ];
+  const reviewEvidence = pending.mode === 'report'
+    ? reportReviewEvidence(pending.result)
+    : [...correctionDecisionEvidence(pending), ...unresolvedReviewEvidence(pending.result)];
   state.pendingFileReview = null;
   hideFileReview();
   commitSuccessfulFileAnalysis(pending.file, pending.contentBase64, pending.result, reviewEvidence);
@@ -821,11 +882,9 @@ function replacePendingFileReview() {
 
 function chooseCorrection(index, choice) {
   const pending = state.pendingFileReview;
-  if (!pending) return;
+  if (!pending || pending.mode === 'report') return;
   pending.correctionDecisions[index] = choice;
-  for (const button of document.querySelectorAll(`[data-correction-index="${index}"]`)) {
-    button.classList.toggle('selected', button.dataset.correctionChoice === choice);
-  }
+  for (const button of document.querySelectorAll(`[data-correction-index="${index}"]`)) button.classList.toggle('selected', button.dataset.correctionChoice === choice);
   updateReviewConfirmState();
 }
 
@@ -836,49 +895,36 @@ async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
   clearPendingFileReview();
   state.pendingFile = file;
   $('file-errors').textContent = '';
-
   if (!isImageFile(file) && file.size > MAX_FILE_BYTES) {
     state.pendingFile = null;
     $('file-progress').hidden = true;
     $('file-errors').textContent = `文件过大：当前版本单个文件最大支持 3 MB。${previousDocument ? ' 此前成功分析的资料仍保留。' : ''}`;
     return;
   }
-
   const controller = new AbortController();
   state.fileAnalysisController = controller;
   $('workbook').disabled = true;
-  $('file-status').textContent = automaticRetry
-    ? '检测到刚才切换到后台后连接中断，正在自动重新分析一次。'
-    : (previousDocument ? '正在分析新资料；此前成功分析的资料会保留到新结果确认后再替换。' : '');
+  $('file-status').textContent = automaticRetry ? '检测到刚才切换到后台后连接中断，正在自动重新分析一次。' : (previousDocument ? '正在分析新资料；此前成功分析的资料会保留到新结果确认后再替换。' : '');
   setFileProgress(2, isImageFile(file) ? '正在优化图片' : '正在读取文件', { reset:true });
   setFileProgressActions({ analyzing:true, retry:false });
   startFileElapsedTimer();
   let retryAfterFinally = false;
-
   try {
     const transportFile = isImageFile(file) ? await optimizeImageForOcr(file, { signal:controller.signal }) : file;
-    if (transportFile.size > MAX_FILE_BYTES) {
-      throw new Error('优化后的文件仍超过 3 MB，请先裁剪或压缩后再上传');
-    }
+    if (transportFile.size > MAX_FILE_BYTES) throw new Error('优化后的文件仍超过 3 MB，请先裁剪或压缩后再上传');
     if (transportFile !== file) setFileProgress(6, '图片已优化，正在读取');
-
     const contentBase64 = await fileToBase64(transportFile, {
       signal:controller.signal,
       onProgress:(fraction) => setFileProgress(2 + fraction * 6, transportFile !== file ? '正在读取优化后的图片' : '正在读取文件')
     });
     setFileProgress(8, '文件已读取，正在发送到分析服务');
-
-    const result = await postFileAnalysisStream(transportFile, contentBase64, {
-      signal:controller.signal,
-      onProgress:(event) => setFileProgress(event?.percent, event?.message)
-    });
+    const result = await postFileAnalysisStream(transportFile, contentBase64, { signal:controller.signal, onProgress:(event) => setFileProgress(event?.percent, event?.message) });
     if (controller.signal.aborted || state.diagnosis.id !== capturedDiagnosisId) return;
-
     applySuccessfulFileAnalysis(file, contentBase64, result);
     state.pendingFile = null;
     state.fileResumeAfterBackground = false;
     state.fileBackgroundRetryCount = 0;
-    setFileProgress(100, (result.document?.type === 'image' || requiresFileReview(result)) ? '资料检查完成，等待确认' : '分析完成');
+    setFileProgress(100, (result.document?.type === 'image' || requiresFileReview(result)) ? '报表检查完成，等待确认' : '分析完成');
     setFileProgressActions({ analyzing:false, retry:false });
   } catch (error) {
     if (state.diagnosis.id !== capturedDiagnosisId) return;
@@ -899,8 +945,7 @@ async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
       if (cancelled) baseMessage = '已取消分析。';
       else if (error.status === 429) baseMessage = errorWithRequestId('文件分析请求较频繁，请稍后再试。', error.requestId);
       else baseMessage = errorWithRequestId(`文件分析失败：${error.message}`, error.requestId);
-      const keepMessage = previousDocument ? ' 此前成功分析的资料仍保留。' : '';
-      $('file-errors').textContent = `${baseMessage}${keepMessage}`;
+      $('file-errors').textContent = `${baseMessage}${previousDocument ? ' 此前成功分析的资料仍保留。' : ''}`;
       $('file-progress-message').textContent = cancelled ? '分析已取消，可重新分析' : '分析已中断，可重新分析';
       setFileProgressActions({ analyzing:false, retry:Boolean(state.pendingFile) });
     }
@@ -911,9 +956,7 @@ async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
       $('workbook').disabled = false;
       state.fileAnalysisController = null;
     }
-    if (retryAfterFinally && state.pendingFile && state.diagnosis.id === capturedDiagnosisId) {
-      setTimeout(() => analyzeBusinessFile(state.pendingFile, { automaticRetry:true }), 0);
-    }
+    if (retryAfterFinally && state.pendingFile && state.diagnosis.id === capturedDiagnosisId) setTimeout(() => analyzeBusinessFile(state.pendingFile, { automaticRetry:true }), 0);
   }
 }
 
@@ -929,11 +972,7 @@ async function downloadReport() {
   $('request-error').textContent = '';
   $('download-excel').disabled = true;
   try {
-    const result = await postJson('/api/report', {
-      file:{ name:state.originalFile.name, contentBase64:state.originalBase64 },
-      audit:state.audit || { errors:[], anomalies:[], metrics:{} },
-      findings:state.diagnosis.findings
-    });
+    const result = await postJson('/api/report', { file:{ name:state.originalFile.name, contentBase64:state.originalBase64 }, audit:state.audit || { errors:[], anomalies:[], metrics:{} }, findings:state.diagnosis.findings });
     const blob = base64ToBlob(result.contentBase64, result.mimeType);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -956,13 +995,9 @@ function retryPendingFile({ automaticRetry = false } = {}) {
 }
 
 $('send').addEventListener('click', sendDiagnosis);
-$('retry-diagnosis').addEventListener('click', () => {
-  if (state.pendingDiagnosisRequest) requestDiagnosis();
-});
+$('retry-diagnosis').addEventListener('click', () => { if (state.pendingDiagnosisRequest) requestDiagnosis(); });
 $('new-diagnosis').addEventListener('click', resetDiagnosisExperience);
-$('owner-input').addEventListener('keydown', (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') sendDiagnosis();
-});
+$('owner-input').addEventListener('keydown', (event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') sendDiagnosis(); });
 $('workbook').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
   if (file) {
@@ -971,21 +1006,13 @@ $('workbook').addEventListener('change', (event) => {
     analyzeBusinessFile(file);
   }
 });
-$('cancel-file').addEventListener('click', () => {
-  state.fileResumeAfterBackground = false;
-  state.fileAnalysisController?.abort();
-});
-$('retry-file').addEventListener('click', () => {
-  state.fileResumeAfterBackground = false;
-  state.fileBackgroundRetryCount = 0;
-  retryPendingFile();
-});
+$('cancel-file').addEventListener('click', () => { state.fileResumeAfterBackground = false; state.fileAnalysisController?.abort(); });
+$('retry-file').addEventListener('click', () => { state.fileResumeAfterBackground = false; state.fileBackgroundRetryCount = 0; retryPendingFile(); });
 $('file-review-corrections').addEventListener('click', (event) => {
   const button = event.target.closest?.('[data-correction-choice]');
   if (!button) return;
   const index = Number(button.dataset.correctionIndex);
-  if (!Number.isInteger(index)) return;
-  chooseCorrection(index, button.dataset.correctionChoice);
+  if (Number.isInteger(index)) chooseCorrection(index, button.dataset.correctionChoice);
 });
 $('confirm-file').addEventListener('click', confirmPendingFileReview);
 $('replace-file').addEventListener('click', replacePendingFileReview);
