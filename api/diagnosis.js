@@ -97,16 +97,16 @@ const RESPONSE_SCHEMA = {
   }
 };
 
-function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function logDiagnosisError(stage, error, requestId, startedAt) {
   console.error('[diagnosis]', requestId, stage, Date.now() - startedAt, error?.name || 'Error');
 }
 
 function jsonError(res, status, error, requestId) {
   return res.status(status).json({ error, requestId });
+}
+
+function injectedOrRuntime(deps, key, runtimeValue) {
+  return Object.prototype.hasOwnProperty.call(deps, key) ? deps[key] : runtimeValue;
 }
 
 // Kept for compatibility with existing tests and callers; new runtime routing uses providers below.
@@ -117,21 +117,31 @@ export async function callOpenAiDiagnosis(diagnosis, { apiKey, fetchImpl = fetch
       model,
       instructions:'你是经营诊断助手。不得把猜测写成事实。信息不足时只追问一个问题；证据足够时输出结构化 findings。',
       input:JSON.stringify(diagnosis),
+      max_output_tokens:2500,
       text:{ format:{ type:'json_schema', name:'zhenduan_diagnosis', strict:true, schema:RESPONSE_SCHEMA } }
     })
   });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`OpenAI request failed (${response.status}): ${detail.slice(0,300)}`);
-  }
+  if (!response.ok) throw new Error(`OpenAI request failed (${response.status})`);
   const payload = await response.json();
   if (!payload.output_text) throw new Error('OpenAI response has no output_text');
   return JSON.parse(payload.output_text);
 }
 
-function singleModel(result) {
+function singleModel(result, status = 'single_model') {
   if (result.mode !== 'finding') return result;
-  return { ...result, findings: result.findings.map(f => ({ ...f, crossModelStatus: f.deterministic ? 'program_fact' : 'single_model' })) };
+  return {
+    ...result,
+    findings: result.findings.map((finding) => ({
+      ...finding,
+      crossModelStatus: finding.deterministic ? 'program_fact' : status
+    }))
+  };
+}
+
+function sameProvider(left, right) {
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return Boolean(left.name && right.name && left.name === right.name);
 }
 
 function buildRuntimeProviders() {
@@ -140,17 +150,35 @@ function buildRuntimeProviders() {
 
   if (deepSeekKey) {
     return {
-      primaryProvider: createDeepSeekProvider({ apiKey: deepSeekKey }),
-      reviewerProvider: openAiKey ? createOpenAIProvider({ apiKey: openAiKey }) : null
+      primaryProvider: createDeepSeekProvider({ apiKey:deepSeekKey, timeoutMs:12000 }),
+      fallbackProvider: openAiKey ? createOpenAIProvider({ apiKey:openAiKey, timeoutMs:12000 }) : null,
+      reviewerProvider: openAiKey ? createOpenAIProvider({ apiKey:openAiKey, timeoutMs:8000 }) : null
     };
   }
   if (openAiKey) {
     return {
-      primaryProvider: createOpenAIProvider({ apiKey: openAiKey }),
-      reviewerProvider: deepSeekKey ? createDeepSeekProvider({ apiKey: deepSeekKey, model: process.env.DEEPSEEK_REVIEW_MODEL || 'deepseek-v4-pro' }) : null
+      primaryProvider: createOpenAIProvider({ apiKey:openAiKey, timeoutMs:12000 }),
+      fallbackProvider: null,
+      reviewerProvider: null
     };
   }
-  return { primaryProvider: null, reviewerProvider: null };
+  return { primaryProvider:null, fallbackProvider:null, reviewerProvider:null };
+}
+
+async function diagnoseWithFallback(diagnosis, { primaryProvider, fallbackProvider, requestId, startedAt }) {
+  try {
+    return {
+      provider:primaryProvider,
+      result:validateAiResult(normalizeAiResult(await primaryProvider.diagnose(diagnosis)))
+    };
+  } catch (error) {
+    logDiagnosisError(`primary-provider:${primaryProvider?.name || 'unknown'}`, error, requestId, startedAt);
+    if (!fallbackProvider?.diagnose) throw error;
+    return {
+      provider:fallbackProvider,
+      result:validateAiResult(normalizeAiResult(await fallbackProvider.diagnose(diagnosis)))
+    };
+  }
 }
 
 export async function handleDiagnosisRequest(req, res, deps = {}) {
@@ -175,26 +203,35 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
   }
 
   const runtime = buildRuntimeProviders();
-  const primaryProvider = deps.primaryProvider || runtime.primaryProvider;
-  const reviewerProvider = deps.reviewerProvider || runtime.reviewerProvider;
+  const primaryProvider = injectedOrRuntime(deps, 'primaryProvider', runtime.primaryProvider);
+  const fallbackProvider = injectedOrRuntime(deps, 'fallbackProvider', runtime.fallbackProvider);
+  const reviewerProvider = injectedOrRuntime(deps, 'reviewerProvider', runtime.reviewerProvider);
   if (!primaryProvider?.diagnose) {
     return jsonError(res, 503, 'Server is missing AI provider key (DEEPSEEK_API_KEY or OPENAI_API_KEY)', requestId);
   }
 
   try {
-    let result = validateAiResult(normalizeAiResult(await primaryProvider.diagnose(diagnosis)));
+    const diagnosed = await diagnoseWithFallback(diagnosis, { primaryProvider, fallbackProvider, requestId, startedAt });
+    let result = diagnosed.result;
+
     if (result.mode === 'finding') {
-      if (reviewerProvider?.review) {
-        result = await crossReviewDiagnosis(result, { reviewer: (payload) => reviewerProvider.review(payload) });
+      if (reviewerProvider?.review && !sameProvider(reviewerProvider, diagnosed.provider)) {
+        try {
+          result = await crossReviewDiagnosis(result, { reviewer:(payload) => reviewerProvider.review(payload) });
+        } catch (error) {
+          logDiagnosisError(`reviewer-provider:${reviewerProvider?.name || 'unknown'}`, error, requestId, startedAt);
+          result = singleModel(result, 'review_unavailable');
+        }
       } else {
         result = singleModel(result);
       }
       validateAiResult(result);
     }
-    console.info('[diagnosis]', requestId, 'complete', primaryProvider?.name || 'unknown', Date.now() - startedAt);
+
+    console.info('[diagnosis]', requestId, 'complete', diagnosed.provider?.name || 'unknown', Date.now() - startedAt);
     return res.status(200).json({ ...result, requestId });
   } catch (error) {
-    logDiagnosisError(`runtime-provider:${primaryProvider?.name || 'unknown'}`, error, requestId, startedAt);
+    logDiagnosisError('all-diagnosis-providers-failed', error, requestId, startedAt);
     return jsonError(res, 502, 'AI diagnosis failed', requestId);
   }
 }
