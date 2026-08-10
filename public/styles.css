@@ -41,6 +41,13 @@ input[type=file] { width:100%; margin-top:8px; padding:12px; border:1px dashed #
 .progress-bar { width:0%; height:100%; border-radius:inherit; background:#171717; transition:width .22s ease; }
 .progress-actions { display:flex; gap:7px; flex-shrink:0; }
 .small-button { padding:7px 10px; border-radius:9px; font-size:12px; }
+.file-review { margin-top:14px; padding:14px; border:1px solid #d8d5ce; border-radius:14px; background:#faf9f6; }
+.file-review-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.file-review h3 { margin:4px 0 0; font-size:17px; }
+.review-confidence { flex-shrink:0; font-size:12px; font-weight:700; padding:5px 8px; border-radius:999px; background:#eceae4; color:#555; }
+.review-warning { margin:10px 0; padding:10px 11px; border-radius:10px; background:#fff4df; color:#74510c; font-size:13px; line-height:1.55; }
+.file-review-text { max-height:240px; overflow:auto; padding:12px; border:1px solid #e1ded6; border-radius:10px; background:#fff; white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:1.55; -webkit-overflow-scrolling:touch; }
+.file-review-actions { gap:8px; }
 .legend { display:flex; flex-wrap:wrap; gap:7px; margin:14px 0; }
 .legend span,.badge { font-size:12px; padding:5px 8px; background:#f1f0ec; border-radius:999px; }
 .finding { border-top:1px solid #eceae4; padding:15px 0 4px; }
@@ -48,5 +55,5 @@ input[type=file] { width:100%; margin-top:8px; padding:12px; border:1px dashed #
 .finding h3 { margin:7px 0; font-size:18px; }
 .finding p { margin:7px 0; line-height:1.55; }
 .small { font-size:12px; }
-@media (max-width:420px) { .conversation-head { align-items:flex-start; } .quiet-button { max-width:118px; white-space:normal; } }
+@media (max-width:420px) { .conversation-head { align-items:flex-start; } .quiet-button { max-width:118px; white-space:normal; } .file-review-actions { display:grid; grid-template-columns:1fr 1fr; } .file-review-actions button { width:100%; } }
 @media (min-width:700px) { .shell { padding-top:48px; } .card { padding:24px; } .hero h1 { font-size:40px; } }
