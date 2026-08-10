@@ -9,6 +9,18 @@ function trimOldestKeyIfNeeded() {
   }
 }
 
+function headerValue(req, name) {
+  const value = req?.headers?.[name];
+  if (Array.isArray(value)) return value[0] || '';
+  return typeof value === 'string' ? value : '';
+}
+
+export function requestClientKey(req, prefix = 'request') {
+  const raw = headerValue(req, 'x-vercel-forwarded-for') || headerValue(req, 'x-forwarded-for');
+  const ip = raw.split(',')[0]?.trim();
+  return ip ? `${String(prefix).slice(0, 40)}:${ip.slice(0, 80)}` : '';
+}
+
 export function checkBurstLimit(key, { limit = 40, windowMs = 10 * 60 * 1000, now = Date.now() } = {}) {
   if (!key) return { allowed:true, retryAfterSeconds:0 };
   const safeLimit = Math.max(1, Math.floor(limit));
