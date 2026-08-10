@@ -16,6 +16,14 @@ test('parses CSV as structured tabular data', async () => {
   assert.equal(result.workbook.sheets[0].rows.length, 2);
 });
 
+test('structured parser emits real extraction stage boundaries', async () => {
+  const events = [];
+  const buffer = Buffer.from('订单号,营业额\nA001,100\nA002,200', 'utf8');
+  await parseBusinessDocument({ name:'订单.csv', buffer }, { ...deps, onProgress:(event) => events.push(event) });
+  assert.ok(events.some((event) => event.stage === 'extracting' && event.percent === 35));
+  assert.ok(events.some((event) => event.stage === 'extracting' && event.percent === 55));
+});
+
 test('parses PDF text without inventing structured metrics', async () => {
   const buffer = Buffer.from('%PDF-1.4\nmock', 'utf8');
   const result = await parseBusinessDocument({ name:'报告.pdf', buffer }, deps);
@@ -49,6 +57,20 @@ test('parses image OCR with explicit confidence', async () => {
   assert.equal(result.document.type, 'image');
   assert.equal(result.document.confidence, 0.82);
   assert.match(result.document.text, /营业额/);
+});
+
+test('maps real OCR progress into the OCR stage percentage range', async () => {
+  const events = [];
+  const buffer = Buffer.from([0xff,0xd8,0xff,0xe0,1,2,3,4]);
+  const imageOcr = async (_buffer, { onProgress }) => {
+    onProgress(0.5);
+    return { text:'营业额 88', confidence:0.88 };
+  };
+  await parseBusinessDocument({ name:'后台.jpg', buffer }, { ...deps, imageOcr, onProgress:(event) => events.push(event) });
+  const midpoint = events.find((event) => event.stage === 'ocr' && event.percent > 40 && event.percent < 82);
+  assert.ok(midpoint);
+  assert.equal(midpoint.percent, 61);
+  assert.match(midpoint.message, /识别/);
 });
 
 test('marks low-confidence image OCR as uncertain instead of reliable fact', async () => {
