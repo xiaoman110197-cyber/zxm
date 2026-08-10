@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const DEFAULT_TESSDATA_DIR = process.env.TESSERACT_CACHE_PATH || '/tmp/zhenduan-tessdata';
+const DEFAULT_WORKER_INIT_TIMEOUT_MS = 20_000;
 let bundledTessdataPromise = null;
 
 function bundledLanguageSource() {
@@ -29,7 +30,44 @@ export async function prepareBundledTessdata(targetDir = DEFAULT_TESSDATA_DIR) {
   return bundledTessdataPromise;
 }
 
-export function createBundledImageOcr({ createWorker: injectedCreateWorker, prepareTessdata = prepareBundledTessdata } = {}) {
+function workerInitTimeoutError(timeoutMs) {
+  const error = new Error(`OCR worker 初始化超时 (${timeoutMs}ms)`);
+  error.code = 'OCR_INIT_TIMEOUT';
+  return error;
+}
+
+async function createWorkerWithTimeout(createWorker, options, timeoutMs) {
+  const workerPromise = Promise.resolve().then(() => createWorker('chi_sim', 1, options));
+  let timer;
+  let timedOut = false;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(workerInitTimeoutError(timeoutMs));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([workerPromise, timeoutPromise]);
+  } catch (error) {
+    if (timedOut) {
+      workerPromise
+        .then(async (lateWorker) => {
+          try { await lateWorker?.terminate?.(); } catch {}
+        })
+        .catch(() => {});
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function createBundledImageOcr({
+  createWorker: injectedCreateWorker,
+  prepareTessdata = prepareBundledTessdata,
+  workerInitTimeoutMs = DEFAULT_WORKER_INIT_TIMEOUT_MS
+} = {}) {
   async function loadCreateWorker() {
     if (injectedCreateWorker) return injectedCreateWorker;
     const module = await import('tesseract.js');
@@ -43,12 +81,12 @@ export function createBundledImageOcr({ createWorker: injectedCreateWorker, prep
     ]);
     let worker;
     try {
-      worker = await createWorker('chi_sim', 1, {
+      worker = await createWorkerWithTimeout(createWorker, {
         langPath:tessdataDir,
         cachePath:tessdataDir,
         gzip:true,
         logger:(message) => reportProgress?.(message)
-      });
+      }, workerInitTimeoutMs);
       const result = await worker.recognize(buffer);
       return {
         text:String(result.data?.text || '').trim(),
