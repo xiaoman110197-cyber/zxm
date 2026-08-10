@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { auditWorkbook } from '../src/audit/rules.js';
 import { parseBusinessDocument, supportedBusinessDocumentExtensions } from '../src/documents/parse.js';
 import { decodeBase64Strict } from '../src/http/base64.js';
+import { checkBurstLimit, requestClientKey } from '../src/http/guard.js';
 
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
 const MAX_CONTEXT_ISSUES = 10;
@@ -106,6 +107,16 @@ function jsonError(res, status, error, requestId) {
   return res.status(status).json({ error, requestId });
 }
 
+function applyBurstGuard(req, res, requestId, deps) {
+  if (deps.disableBurstGuard) return null;
+  const key = requestClientKey(req, 'file-analysis');
+  if (!key) return null;
+  const result = checkBurstLimit(key, { limit:20, windowMs:10 * 60 * 1000 });
+  if (result.allowed) return null;
+  res.setHeader?.('Retry-After', String(result.retryAfterSeconds));
+  return jsonError(res, 429, '文件分析请求较频繁，请稍后再试', requestId);
+}
+
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   const requestId = deps.requestId || randomUUID();
   const startedAt = Date.now();
@@ -117,6 +128,8 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   if (!supportedBusinessDocumentExtensions.includes(extension)) {
     return jsonError(res, 415, '支持 Excel、CSV、PDF、Word DOCX 和 JPG/PNG 图片', requestId);
   }
+  const limited = applyBurstGuard(req, res, requestId, deps);
+  if (limited) return limited;
 
   let buffer;
   try {
