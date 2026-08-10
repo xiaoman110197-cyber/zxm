@@ -27,7 +27,23 @@
       <p class="muted">支持 Excel、CSV、PDF、Word 和 JPG/PNG 图片。系统会先识别资料内容，再把数据质量问题与经营异常分开；识别不确定的内容会提示人工确认。</p>
       <input id="workbook" type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.jpg,.jpeg,.png,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png">
       <p class="muted small">可上传：.xlsx / .xls / .csv / .pdf / .docx / .jpg / .jpeg / .png</p>
-      <div id="file-status" class="status"></div>
+
+      <div id="file-progress" class="file-progress" role="progressbar" aria-label="文件分析进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+        <div class="progress-head">
+          <span id="file-progress-message">准备分析…</span>
+          <strong id="file-progress-percent">0%</strong>
+        </div>
+        <div class="progress-track" aria-hidden="true"><div id="file-progress-bar" class="progress-bar"></div></div>
+        <div class="progress-foot">
+          <span id="file-progress-elapsed" class="muted small">已用时 0 秒</span>
+          <div class="progress-actions">
+            <button id="cancel-file" type="button" class="small-button">取消分析</button>
+            <button id="retry-file" type="button" class="small-button" hidden>重新分析</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="file-status" class="status" aria-live="polite"></div>
       <div id="file-errors" class="file-errors" aria-live="polite"></div>
     </section>
 
