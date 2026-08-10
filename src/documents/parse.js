@@ -23,6 +23,12 @@ function startsWith(buffer, bytes) {
   return bytes.every((byte, index) => buffer[index] === byte);
 }
 
+function isSupportedImageSignature(buffer) {
+  const jpeg = startsWith(buffer, [0xff,0xd8,0xff]);
+  const png = startsWith(buffer, [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]);
+  return jpeg || png;
+}
+
 function assertSignature(extension, buffer) {
   if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('文件内容为空或损坏');
   if (extension === '.xlsx' || extension === '.docx') {
@@ -33,10 +39,8 @@ function assertSignature(extension, buffer) {
     if (!startsWith(buffer, [0xd0,0xcf,0x11,0xe0,0xa1,0xb1,0x1a,0xe1])) throw new Error('文件格式签名不匹配或文件损坏');
   } else if (extension === '.pdf') {
     if (buffer.subarray(0,5).toString('ascii') !== '%PDF-') throw new Error('文件格式签名不匹配或 PDF 损坏');
-  } else if (extension === '.jpg' || extension === '.jpeg') {
-    if (!startsWith(buffer, [0xff,0xd8,0xff])) throw new Error('文件格式签名不匹配或图片损坏');
-  } else if (extension === '.png') {
-    if (!startsWith(buffer, [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])) throw new Error('文件格式签名不匹配或图片损坏');
+  } else if (extension === '.jpg' || extension === '.jpeg' || extension === '.png') {
+    if (!isSupportedImageSignature(buffer)) throw new Error('文件格式签名不匹配或图片损坏');
   } else if (extension === '.csv') {
     if (buffer.includes(0x00)) throw new Error('CSV 文件格式异常或损坏');
   }
