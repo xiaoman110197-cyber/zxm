@@ -1,7 +1,17 @@
 const $ = (id) => document.getElementById(id);
 const PRIORITIES = ['P0', 'P1', 'P2'];
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
-const state = { diagnosis: { id: crypto.randomUUID(), answers: {}, evidence: [], findings: [], documents: [] }, turn: 0, originalFile: null, originalBase64: '', audit: null };
+const state = {
+  diagnosis: { id: crypto.randomUUID(), answers: {}, evidence: [], findings: [], documents: [] },
+  turn: 0,
+  originalFile: null,
+  originalBase64: '',
+  audit: null,
+  fileAnalyzing: false,
+  fileRequestId: 0,
+  fileController: null,
+  lastFile: null
+};
 
 function addBubble(text, who) {
   const node = document.createElement('div');
@@ -16,6 +26,10 @@ function findingLabel(status) {
 
 function updateDownloadState() {
   $('download-excel').disabled = !(state.originalFile && state.originalBase64 && state.diagnosis.findings.length);
+}
+
+function updateSendState() {
+  $('send').disabled = state.fileAnalyzing;
 }
 
 function renderFindings(findings) {
@@ -46,6 +60,10 @@ async function postJson(url, body) {
 }
 
 async function sendDiagnosis() {
+  if (state.fileAnalyzing) {
+    $('request-error').textContent = '经营资料仍在分析，请稍候完成后再开始诊断。';
+    return;
+  }
   const input = $('owner-input');
   const text = input.value.trim();
   if (!text) return;
@@ -68,7 +86,7 @@ async function sendDiagnosis() {
   } catch (error) {
     $('request-error').textContent = error.message;
   } finally {
-    $('send').disabled = false;
+    updateSendState();
   }
 }
 
@@ -119,47 +137,223 @@ function fileStatusText(result) {
   return `已读取 ${type}：提取 ${summary.textLength || 0} 个字符${confidence}；${issueText}。`;
 }
 
+function clearFileEvidence() {
+  state.diagnosis.evidence = state.diagnosis.evidence.filter((entry) => !(typeof entry === 'string' && entry.startsWith('file_analysis:')));
+}
+
 function resetUploadedFileState() {
   state.originalFile = null;
   state.originalBase64 = '';
   state.audit = null;
   state.diagnosis.documents = [];
+  clearFileEvidence();
   updateDownloadState();
 }
 
+function setFileProgress(percent, message) {
+  const value = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  $('file-progress').hidden = false;
+  $('file-progress-percent').textContent = `${value}%`;
+  $('file-progress-stage').textContent = message || '正在分析经营资料…';
+  $('file-progress-bar').setAttribute('aria-valuenow', String(value));
+  $('file-progress-fill').style.width = `${value}%`;
+}
+
+function setRetryVisible(visible) {
+  $('retry-file').hidden = !visible;
+}
+
+function networkFailure(message = '连接中断，未收到服务器结果') {
+  const error = new Error(message);
+  error.networkFailure = true;
+  return error;
+}
+
+function isNetworkFailure(error) {
+  if (error?.name === 'AbortError') return false;
+  if (error?.networkFailure === true) return true;
+  const message = String(error?.message || '');
+  return /Load failed|Failed to fetch|NetworkError|network|连接中断/i.test(message);
+}
+
+function safeFileError(error) {
+  if (isNetworkFailure(error)) return '连接中断，未收到服务器结果';
+  return String(error?.message || '文件分析失败');
+}
+
+function parseNdjsonLine(line, onProgress) {
+  const event = JSON.parse(line);
+  if (event.type === 'progress') onProgress(event);
+  if (event.type === 'error') {
+    const error = new Error(event.error || '文件分析失败');
+    error.serverAnalysis = true;
+    error.statusCode = event.status;
+    throw error;
+  }
+  return event.type === 'result' ? event.result : null;
+}
+
+async function streamFileAnalysis(file, contentBase64, { signal, onProgress }) {
+  let response;
+  try {
+    response = await fetch('/api/analyze-file-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file: { name:file.name, contentBase64 } }),
+      signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    throw networkFailure();
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `请求失败 (${response.status})`);
+  }
+  if (!response.body?.getReader) throw networkFailure('当前浏览器未收到流式分析结果');
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result = null;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream:true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const maybeResult = parseNdjsonLine(line, onProgress);
+        if (maybeResult) result = maybeResult;
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.trim()) {
+      const maybeResult = parseNdjsonLine(buffer, onProgress);
+      if (maybeResult) result = maybeResult;
+    }
+  } catch (error) {
+    if (error?.name === 'AbortError' || error?.serverAnalysis) throw error;
+    throw networkFailure();
+  }
+  if (!result) throw networkFailure();
+  return result;
+}
+
+function waitUntilVisible(requestId) {
+  if (document.visibilityState !== 'hidden') return Promise.resolve();
+  return new Promise((resolve) => {
+    const handler = () => {
+      if (document.visibilityState === 'hidden') return;
+      document.removeEventListener('visibilitychange', handler);
+      if (requestId === state.fileRequestId) resolve();
+      else resolve();
+    };
+    document.addEventListener('visibilitychange', handler);
+  });
+}
+
+function applyFileResult(result, file, contentBase64, requestId) {
+  if (requestId !== state.fileRequestId) return false;
+  clearFileEvidence();
+  if (result.document.type === 'excel') {
+    state.originalFile = file;
+    state.originalBase64 = contentBase64;
+  } else {
+    state.originalFile = null;
+    state.originalBase64 = '';
+  }
+  state.audit = result.audit;
+  state.diagnosis.documents = [result.document];
+  state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`);
+  $('file-status').textContent = fileStatusText(result);
+  $('file-errors').textContent = summarizeFileIssues(result);
+  setFileProgress(100, '分析完成');
+  setRetryVisible(false);
+  updateDownloadState();
+  return true;
+}
+
 async function analyzeBusinessFile(file) {
+  state.fileRequestId += 1;
+  const requestId = state.fileRequestId;
+  state.fileController?.abort();
+  state.fileController = null;
+  state.lastFile = file;
+  state.fileAnalyzing = true;
+  updateSendState();
+  resetUploadedFileState();
   $('file-errors').textContent = '';
+  $('file-status').textContent = '';
+  setRetryVisible(false);
+
   if (file.size > MAX_FILE_BYTES) {
-    resetUploadedFileState();
-    $('file-status').textContent = '';
+    state.fileAnalyzing = false;
+    setFileProgress(0, '文件未开始分析');
     $('file-errors').textContent = '文件过大：当前版本单个文件最大支持 3 MB。';
+    updateSendState();
     return;
   }
 
-  $('file-status').textContent = `正在分析 ${file.name}…`;
   try {
+    setFileProgress(5, `正在读取 ${file.name}…`);
     const contentBase64 = await fileToBase64(file);
-    const result = await postJson('/api/analyze-file', { file: { name: file.name, contentBase64 } });
+    if (requestId !== state.fileRequestId) return;
 
-    if (result.document.type === 'excel') {
-      state.originalFile = file;
-      state.originalBase64 = contentBase64;
-    } else {
-      state.originalFile = null;
-      state.originalBase64 = '';
+    let result = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const controller = new AbortController();
+      state.fileController = controller;
+      try {
+        setFileProgress(attempt === 0 ? 15 : 16, attempt === 0 ? '正在上传并连接分析服务…' : '连接中断，正在自动重试（1/1）…');
+        result = await streamFileAnalysis(file, contentBase64, {
+          signal: controller.signal,
+          onProgress(event) {
+            if (requestId !== state.fileRequestId) return;
+            setFileProgress(event.percent, event.message);
+          }
+        });
+        break;
+      } catch (error) {
+        if (requestId !== state.fileRequestId || error?.name === 'AbortError') return;
+        if (attempt === 0 && isNetworkFailure(error)) {
+          setFileProgress(16, '连接中断，正在自动重试（1/1）…');
+          await waitUntilVisible(requestId);
+          continue;
+        }
+        throw error;
+      }
     }
 
-    state.audit = result.audit;
-    state.diagnosis.documents = [result.document];
-    state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`);
-    $('file-status').textContent = fileStatusText(result);
-    $('file-errors').textContent = summarizeFileIssues(result);
-    updateDownloadState();
+    if (!result) throw networkFailure();
+    applyFileResult(result, file, contentBase64, requestId);
   } catch (error) {
+    if (requestId !== state.fileRequestId || error?.name === 'AbortError') return;
     resetUploadedFileState();
+    const network = isNetworkFailure(error);
     $('file-status').textContent = '';
-    $('file-errors').textContent = `文件分析失败：${error.message}`;
+    $('file-errors').textContent = `文件分析失败：${safeFileError(error)}`;
+    if (network) {
+      setFileProgress(Number($('file-progress-bar').getAttribute('aria-valuenow') || 0), '连接中断，可重新分析');
+      setRetryVisible(true);
+    } else {
+      setRetryVisible(false);
+    }
+  } finally {
+    if (requestId === state.fileRequestId) {
+      state.fileAnalyzing = false;
+      state.fileController = null;
+      updateSendState();
+    }
   }
+}
+
+function retryFile() {
+  if (!state.lastFile || state.fileAnalyzing) return;
+  $('retry-file').textContent = '重新分析';
+  analyzeBusinessFile(state.lastFile);
 }
 
 function base64ToBlob(contentBase64, mimeType) {
@@ -203,4 +397,5 @@ $('workbook').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
   if (file) analyzeBusinessFile(file);
 });
+$('retry-file').addEventListener('click', retryFile);
 $('download-excel').addEventListener('click', downloadReport);
