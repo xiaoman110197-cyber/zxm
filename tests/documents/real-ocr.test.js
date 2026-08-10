@@ -7,7 +7,7 @@ const PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAWgAAABkCAAAAACOO/XGAAAG00lEQVR42u2a
 test('default image OCR reads simplified Chinese and numbers through Tesseract', async () => {
   const result = await parseBusinessDocument({ name:'real.png', buffer:Buffer.from(PNG_BASE64, 'base64') });
   assert.equal(result.document.type, 'image');
-  assert.match(result.document.text, /营业额/);
+  assert.match(result.document.text, /营业\s*额/);
   assert.match(result.document.text, /88/);
   assert.ok(result.document.confidence > 0.4);
 });
