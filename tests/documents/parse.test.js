@@ -51,6 +51,13 @@ test('parses image OCR with explicit confidence', async () => {
   assert.match(result.document.text, /营业额/);
 });
 
+test('accepts JPG/PNG filename mismatch when the bytes are still a supported image', async () => {
+  const pngBytes = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3]);
+  const result = await parseBusinessDocument({ name:'手机重编码.jpg', buffer:pngBytes }, deps);
+  assert.equal(result.document.type, 'image');
+  assert.match(result.document.text, /营业额/);
+});
+
 test('image parser forwards OCR progress into the shared progress callback', async () => {
   const buffer = Buffer.from([0xff,0xd8,0xff,0xe0,1,2,3,4]);
   const events = [];
