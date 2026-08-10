@@ -7,6 +7,7 @@ const state = {
   originalFile: null,
   originalBase64: '',
   audit: null,
+  diagnosisBusy: false,
   fileAnalyzing: false,
   fileRequestId: 0,
   fileController: null,
@@ -29,7 +30,8 @@ function updateDownloadState() {
 }
 
 function updateSendState() {
-  $('send').disabled = state.fileAnalyzing;
+  $('send').disabled = state.fileAnalyzing || state.diagnosisBusy;
+  $('send').textContent = state.diagnosisBusy ? '正在分析…' : '开始诊断';
 }
 
 function renderFindings(findings) {
@@ -60,6 +62,7 @@ async function postJson(url, body) {
 }
 
 async function sendDiagnosis() {
+  if (state.diagnosisBusy) return;
   if (state.fileAnalyzing) {
     $('request-error').textContent = '经营资料仍在分析，请稍候完成后再开始诊断。';
     return;
@@ -67,12 +70,14 @@ async function sendDiagnosis() {
   const input = $('owner-input');
   const text = input.value.trim();
   if (!text) return;
+
+  state.diagnosisBusy = true;
+  updateSendState();
   $('request-error').textContent = '';
   addBubble(text, 'owner');
   state.turn += 1;
   state.diagnosis.answers[`owner_turn_${state.turn}`] = text;
   input.value = '';
-  $('send').disabled = true;
   try {
     const result = await postJson('/api/diagnosis', { diagnosis: state.diagnosis });
     if (result.mode === 'question') {
@@ -86,6 +91,7 @@ async function sendDiagnosis() {
   } catch (error) {
     $('request-error').textContent = error.message;
   } finally {
+    state.diagnosisBusy = false;
     updateSendState();
   }
 }
@@ -207,8 +213,15 @@ async function streamFileAnalysis(file, contentBase64, { signal, onProgress }) {
     throw networkFailure();
   }
   if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `请求失败 (${response.status})`);
+    const raw = await response.text().catch(() => '');
+    try {
+      const first = raw.split('\n').find((line) => line.trim());
+      const event = first ? JSON.parse(first) : null;
+      throw new Error(event?.error || `请求失败 (${response.status})`);
+    } catch (error) {
+      if (error instanceof SyntaxError) throw new Error(`请求失败 (${response.status})`);
+      throw error;
+    }
   }
   if (!response.body?.getReader) throw networkFailure('当前浏览器未收到流式分析结果');
 
@@ -248,8 +261,7 @@ function waitUntilVisible(requestId) {
     const handler = () => {
       if (document.visibilityState === 'hidden') return;
       document.removeEventListener('visibilitychange', handler);
-      if (requestId === state.fileRequestId) resolve();
-      else resolve();
+      resolve(requestId === state.fileRequestId);
     };
     document.addEventListener('visibilitychange', handler);
   });
@@ -321,6 +333,7 @@ async function analyzeBusinessFile(file) {
         if (attempt === 0 && isNetworkFailure(error)) {
           setFileProgress(16, '连接中断，正在自动重试（1/1）…');
           await waitUntilVisible(requestId);
+          if (requestId !== state.fileRequestId) return;
           continue;
         }
         throw error;
