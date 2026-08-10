@@ -1,17 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCachedImageOcr } from '../../src/documents/ocr.js';
+import { readFile } from 'node:fs/promises';
+import { createBundledImageOcr } from '../../src/documents/ocr.js';
+
+const pkg = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
 
 function workerResult(text = '营业额 88', confidence = 91) {
   return { data:{ text, confidence } };
 }
 
-test('uses a stable Node cache path for traineddata and terminates the worker after success', async () => {
+test('ships simplified-Chinese and English traineddata as local dependencies', () => {
+  assert.equal(pkg.dependencies?.['@tesseract.js-data/chi_sim'], '1.0.0');
+  assert.equal(pkg.dependencies?.['@tesseract.js-data/eng'], '1.0.0');
+});
+
+test('uses a bundled local langPath and terminates the worker after success', async () => {
   let receivedOptions;
   let terminateCount = 0;
   const progress = [];
-  const imageOcr = createCachedImageOcr({
-    cachePath:'/tmp/zhenduan-test-cache',
+  const imageOcr = createBundledImageOcr({
+    prepareTessdata: async () => '/tmp/zhenduan-local-tessdata',
     createWorker: async (_langs, _oem, options) => {
       receivedOptions = options;
       options.logger?.({ status:'recognizing text', progress:0.5 });
@@ -26,20 +34,23 @@ test('uses a stable Node cache path for traineddata and terminates the worker af
 
   assert.equal(result.text, '营业额 88');
   assert.equal(result.confidence, 0.91);
-  assert.equal(receivedOptions.cachePath, '/tmp/zhenduan-test-cache');
+  assert.equal(receivedOptions.langPath, '/tmp/zhenduan-local-tessdata');
+  assert.equal(receivedOptions.cachePath, '/tmp/zhenduan-local-tessdata');
   assert.equal(terminateCount, 1);
   assert.equal(progress.length, 1);
 });
 
-test('sequential image requests create fresh workers but reuse the same traineddata cache location', async () => {
-  const cachePaths = [];
+test('sequential image requests reuse local traineddata but create fresh workers', async () => {
+  let prepareCount = 0;
   let createCount = 0;
   let terminateCount = 0;
-  const imageOcr = createCachedImageOcr({
-    cachePath:'/tmp/shared-tess-cache',
-    createWorker: async (_langs, _oem, options) => {
+  const imageOcr = createBundledImageOcr({
+    prepareTessdata: async () => {
+      prepareCount += 1;
+      return '/tmp/local-tessdata';
+    },
+    createWorker: async () => {
       createCount += 1;
-      cachePaths.push(options.cachePath);
       return {
         async recognize() { return workerResult(`image-${createCount}`, 90); },
         async terminate() { terminateCount += 1; }
@@ -52,14 +63,15 @@ test('sequential image requests create fresh workers but reuse the same trainedd
 
   assert.equal(first.text, 'image-1');
   assert.equal(second.text, 'image-2');
+  assert.equal(prepareCount, 2);
   assert.equal(createCount, 2);
   assert.equal(terminateCount, 2);
-  assert.deepEqual(cachePaths, ['/tmp/shared-tess-cache','/tmp/shared-tess-cache']);
 });
 
 test('terminates an initialized worker even when recognition fails', async () => {
   let terminateCount = 0;
-  const imageOcr = createCachedImageOcr({
+  const imageOcr = createBundledImageOcr({
+    prepareTessdata: async () => '/tmp/local-tessdata',
     createWorker: async () => ({
       async recognize() { throw new Error('worker crashed'); },
       async terminate() { terminateCount += 1; }
