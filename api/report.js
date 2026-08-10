@@ -5,6 +5,9 @@ import { decodeBase64Strict } from '../src/http/base64.js';
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
+const MAX_REPORT_FINDINGS = 100;
+const MAX_REPORT_ISSUES = 1000;
+const MAX_REPORT_METRICS = 200;
 
 function isExcelName(name = '') {
   const lower = String(name).toLowerCase();
@@ -20,6 +23,18 @@ function jsonError(res, status, error, requestId) {
   return res.status(status).json({ error, requestId });
 }
 
+function reportPayloadWithinLimits(body = {}) {
+  const audit = body.audit && typeof body.audit === 'object' ? body.audit : {};
+  const findings = Array.isArray(body.findings) ? body.findings : [];
+  const errors = Array.isArray(audit.errors) ? audit.errors : [];
+  const anomalies = Array.isArray(audit.anomalies) ? audit.anomalies : [];
+  const metrics = audit.metrics && typeof audit.metrics === 'object' && !Array.isArray(audit.metrics) ? audit.metrics : {};
+  return findings.length <= MAX_REPORT_FINDINGS
+    && errors.length <= MAX_REPORT_ISSUES
+    && anomalies.length <= MAX_REPORT_ISSUES
+    && Object.keys(metrics).length <= MAX_REPORT_METRICS;
+}
+
 export async function handleReportRequest(req, res, deps = {}) {
   const requestId = deps.requestId || randomUUID();
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
@@ -27,6 +42,9 @@ export async function handleReportRequest(req, res, deps = {}) {
   const file = req.body?.file;
   if (!file?.name || !file?.contentBase64 || !isExcelName(file.name)) {
     return jsonError(res, 400, '需要原始 Excel file（name + contentBase64）才能生成报告', requestId);
+  }
+  if (!reportPayloadWithinLimits(req.body)) {
+    return jsonError(res, 413, '报告内容过多，超出当前生成上限，请减少诊断条目后重试', requestId);
   }
 
   let sourceBuffer;
