@@ -17,7 +17,7 @@ function mockStreamRes() {
   };
 }
 
-test('file analysis records phase-level progress with request id for OCR debugging', async () => {
+test('file analysis records safe OCR sub-stage progress with request id for debugging', async () => {
   const res = mockStreamRes();
   const logs = [];
   const req = {
@@ -30,8 +30,8 @@ test('file analysis records phase-level progress with request id for OCR debuggi
     requestId:'req-ocr-phase',
     logInfo:(...args) => logs.push(args),
     parseBusinessDocument: async (_input, parserDeps) => {
-      parserDeps.onProgress?.({ phase:'ocr', percent:52, message:'正在初始化文字识别' });
-      parserDeps.onProgress?.({ phase:'ocr', percent:58, message:'正在识别图片中的文字和数字' });
+      parserDeps.onProgress?.({ phase:'ocr', stage:'initializing', percent:52, message:'正在初始化文字识别' });
+      parserDeps.onProgress?.({ phase:'ocr', stage:'recognizing', percent:58, message:'正在识别图片中的文字和数字' });
       return {
         document:{ name:'screen.png', type:'image', structured:false, confidence:0.9, warnings:[], text:'营业额 88' },
         workbook:null
@@ -40,6 +40,7 @@ test('file analysis records phase-level progress with request id for OCR debuggi
   });
 
   assert.equal(res.statusCode, 200);
-  assert.ok(logs.some((entry) => entry.includes('req-ocr-phase') && entry.includes('progress') && entry.includes('ocr') && entry.includes(52)), JSON.stringify(logs));
-  assert.ok(logs.some((entry) => entry.includes('req-ocr-phase') && entry.includes('progress') && entry.includes('ocr') && entry.includes(58)), JSON.stringify(logs));
+  assert.ok(logs.some((entry) => entry.includes('req-ocr-phase') && entry.includes('progress') && entry.includes('ocr') && entry.includes('initializing') && entry.includes(52)), JSON.stringify(logs));
+  assert.ok(logs.some((entry) => entry.includes('req-ocr-phase') && entry.includes('progress') && entry.includes('ocr') && entry.includes('recognizing') && entry.includes(58)), JSON.stringify(logs));
+  assert.ok(logs.every((entry) => !entry.includes('营业额 88')), JSON.stringify(logs));
 });
