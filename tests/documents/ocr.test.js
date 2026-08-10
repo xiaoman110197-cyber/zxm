@@ -84,3 +84,28 @@ test('terminates an initialized worker even when recognition fails', async () =>
   await assert.rejects(() => imageOcr(Buffer.from('bad')), /worker crashed/);
   assert.equal(terminateCount, 1);
 });
+
+test('times out worker initialization and terminates a worker that resolves late', async () => {
+  let recognizeCount = 0;
+  let terminateCount = 0;
+  const imageOcr = createBundledImageOcr({
+    workerInitTimeoutMs: 10,
+    prepareTessdata: async () => '/tmp/local-tessdata',
+    createWorker: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 35));
+      return {
+        async recognize() { recognizeCount += 1; return workerResult(); },
+        async terminate() { terminateCount += 1; }
+      };
+    }
+  });
+
+  await assert.rejects(
+    () => imageOcr(Buffer.from('slow')),
+    (error) => error?.code === 'OCR_INIT_TIMEOUT' && /初始化|timeout/i.test(error.message)
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(recognizeCount, 0);
+  assert.equal(terminateCount, 1);
+});
