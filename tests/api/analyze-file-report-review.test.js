@@ -24,7 +24,7 @@ function reqFor(buffer = Buffer.from('original-image-bytes')) {
   return { method:'POST', body:{ file:{ name:'经营报表.png', contentBase64:buffer.toString('base64') } } };
 }
 
-test('image analysis returns a program-proven report error list from vision facts', async () => {
+test('image analysis returns a program-proven report error list and trusted structured facts', async () => {
   const original = Buffer.from('original-image-bytes');
   let visionInput;
   const res = mockRes();
@@ -51,6 +51,9 @@ test('image analysis returns a program-proven report error list from vision fact
   assert.equal(issue.kind, 'calculation_error');
   assert.equal(issue.correctedValue, 37.76);
   assert.equal(res.body.reportReview.summary.provableCorrectionCount, 1);
+  assert.equal(res.body.reportFacts.length, 3);
+  assert.equal(res.body.reportFacts.every((item) => item.trusted === true), true);
+  assert.equal(res.body.reportFacts.find((item) => item.metric === '营收').value, 9800);
 });
 
 test('vision claimed calculation error is not presented as a correct answer without program proof', async () => {
@@ -69,7 +72,7 @@ test('vision claimed calculation error is not presented as a correct answer with
   assert.equal('correctedValue' in issue, false);
 });
 
-test('OCR and vision conflict on a calculation input downgrades the correction instead of inventing certainty', async () => {
+test('OCR and vision conflict marks that fact untrusted and downgrades dependent correction', async () => {
   const res = mockRes();
   await handleAnalyzeFileRequest(reqFor(), res, {
     disableBurstGuard:true,
@@ -87,6 +90,8 @@ test('OCR and vision conflict on a calculation input downgrades the correction i
   assert.equal(issue.kind, 'needs_confirmation');
   assert.equal('correctedValue' in issue, false);
   assert.ok(res.body.reportReview.summary.confirmationCount >= 1);
+  assert.equal(res.body.reportFacts.find((item) => item.id === 'c').trusted, false);
+  assert.equal(res.body.reportFacts.find((item) => item.id === 'r').trusted, true);
 });
 
 test('vision failure is non-fatal and returns an explicit review warning', async () => {
@@ -99,4 +104,5 @@ test('vision failure is non-fatal and returns an explicit review warning', async
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.reportReview.summary.visionAvailable, false);
   assert.match(res.body.reportReview.summary.visionWarning, /视觉分析/);
+  assert.deepEqual(res.body.reportFacts, []);
 });
