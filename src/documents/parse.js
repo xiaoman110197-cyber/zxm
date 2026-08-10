@@ -41,6 +41,31 @@ function assertSignature(extension, buffer) {
   }
 }
 
+function reportProgress(onProgress, phase, percent, message) {
+  if (typeof onProgress !== 'function') return;
+  const boundedPercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  onProgress({ phase, percent:boundedPercent, message });
+}
+
+function ocrProgressMessage(status = '') {
+  const normalized = String(status).toLowerCase();
+  if (normalized.includes('loading tesseract core')) return '正在加载文字识别引擎';
+  if (normalized.includes('loading language')) return '正在加载中文和英文识别模型';
+  if (normalized.includes('initializing')) return '正在初始化文字识别';
+  if (normalized.includes('recognizing text')) return '正在识别图片中的文字和数字';
+  return '正在处理图片文字';
+}
+
+function mapOcrProgress(message = {}) {
+  const status = String(message.status || '').toLowerCase();
+  const progress = Number.isFinite(message.progress) ? Math.max(0, Math.min(1, message.progress)) : 0;
+  if (status.includes('loading tesseract core')) return 30 + progress * 8;
+  if (status.includes('loading language')) return 38 + progress * 14;
+  if (status.includes('initializing')) return 52 + progress * 6;
+  if (status.includes('recognizing text')) return 58 + progress * 27;
+  return 30 + progress * 25;
+}
+
 function boundExtractedText(value, initialWarnings = []) {
   const text = String(value || '').trim();
   const warnings = [...initialWarnings];
@@ -144,9 +169,11 @@ async function defaultDocxTextExtractor(buffer) {
   };
 }
 
-async function defaultImageOcr(buffer) {
+async function defaultImageOcr(buffer, reportOcrProgress) {
   const { createWorker } = await import('tesseract.js');
-  const worker = await createWorker(['chi_sim','eng']);
+  const worker = await createWorker(['chi_sim','eng'], 1, {
+    logger: (message) => reportOcrProgress?.(message)
+  });
   try {
     const result = await worker.recognize(buffer);
     return {
@@ -160,21 +187,30 @@ async function defaultImageOcr(buffer) {
 
 export async function parseBusinessDocument({ name, buffer }, deps = {}) {
   const extension = extensionOf(name);
+  const onProgress = deps.onProgress;
   if (!SUPPORTED.has(extension)) throw new Error('不支持的文件格式');
+  reportProgress(onProgress, 'validation', 15, '正在校验文件格式');
   assertSignature(extension, buffer);
 
   if (extension === '.xlsx' || extension === '.xls' || extension === '.csv') {
+    reportProgress(onProgress, 'parsing', 30, '正在读取表格数据');
     const workbook = parseWorkbook(buffer);
     if (!workbook.sheets.length) throw new Error('表格文件没有可读取的数据');
-    return sheetDocument(name, extension, workbook);
+    reportProgress(onProgress, 'parsing', 70, '已读取表格，正在整理字段和数据样本');
+    const result = sheetDocument(name, extension, workbook);
+    reportProgress(onProgress, 'parsing', 80, '表格内容读取完成');
+    return result;
   }
 
   if (extension === '.pdf') {
+    reportProgress(onProgress, 'parsing', 30, '正在读取 PDF 内容');
     const extractor = deps.pdfTextExtractor || defaultPdfTextExtractor;
     const extracted = await extractor(buffer);
+    reportProgress(onProgress, 'parsing', 75, '已提取 PDF 文字，正在整理内容');
     const initialWarnings = [];
     if (!extracted.text) initialWarnings.push('PDF 未提取到可用文字；扫描件可能需要图片识别');
     const bounded = boundExtractedText(extracted.text, initialWarnings);
+    reportProgress(onProgress, 'parsing', 85, 'PDF 内容读取完成');
     return {
       document:{ name, source:{kind:'upload',name}, type:'pdf', structured:false, confidence:bounded.text ? 1 : 0, text:bounded.text, truncated:bounded.truncated, pageCount:extracted.pageCount ?? null, warnings:bounded.warnings },
       workbook:null
@@ -182,19 +218,26 @@ export async function parseBusinessDocument({ name, buffer }, deps = {}) {
   }
 
   if (extension === '.docx') {
+    reportProgress(onProgress, 'parsing', 30, '正在读取 Word 内容');
     const extractor = deps.docxTextExtractor || defaultDocxTextExtractor;
     const extracted = await extractor(buffer);
+    reportProgress(onProgress, 'parsing', 75, '已提取 Word 文字，正在整理内容');
     const initialWarnings = [...(extracted.warnings || [])];
     if (!extracted.text) initialWarnings.push('Word 文档未提取到可用文字');
     const bounded = boundExtractedText(extracted.text, initialWarnings);
+    reportProgress(onProgress, 'parsing', 85, 'Word 内容读取完成');
     return {
       document:{ name, source:{kind:'upload',name}, type:'docx', structured:false, confidence:bounded.text ? 1 : 0, text:bounded.text, truncated:bounded.truncated, warnings:bounded.warnings },
       workbook:null
     };
   }
 
+  reportProgress(onProgress, 'ocr', 28, '准备图片文字识别');
   const ocr = deps.imageOcr || defaultImageOcr;
-  const extracted = await ocr(buffer);
+  const extracted = await ocr(buffer, (message) => {
+    reportProgress(onProgress, 'ocr', mapOcrProgress(message), ocrProgressMessage(message?.status));
+  });
+  reportProgress(onProgress, 'ocr', 88, '文字识别完成，正在整理识别结果');
   const confidence = Number.isFinite(extracted.confidence) ? Math.max(0, Math.min(1, extracted.confidence)) : 0;
   const initialWarnings = [];
   if (confidence < 0.65) initialWarnings.push('图片文字识别置信度较低，请人工确认关键数字');
