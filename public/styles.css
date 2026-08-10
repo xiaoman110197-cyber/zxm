@@ -14,16 +14,23 @@ h2 { margin:4px 0 0; font-size:20px; }
 textarea { width:100%; resize:vertical; margin-top:9px; padding:14px; border:1px solid #d8d5ce; border-radius:12px; min-height:128px; line-height:1.5; }
 textarea:focus,input:focus,button:focus-visible { outline:2px solid #222; outline-offset:2px; }
 .actions,.download-row { display:flex; justify-content:flex-end; margin-top:12px; }
+.diagnosis-actions { gap:8px; }
 button { border:1px solid #d0cdc5; background:#fff; border-radius:11px; padding:11px 16px; font-weight:700; cursor:pointer; }
 button.primary { background:#171717; color:#fff; border-color:#171717; }
 button:disabled { opacity:.45; cursor:not-allowed; }
 .section-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+.conversation-head { align-items:center; margin-bottom:4px; }
+.quiet-button { white-space:nowrap; color:#555; background:#faf9f6; }
 .optional { font-size:12px; background:#f1f0ec; padding:5px 8px; border-radius:999px; color:#666; }
 input[type=file] { width:100%; margin-top:8px; padding:12px; border:1px dashed #c9c5bb; border-radius:12px; }
-.conversation { display:grid; gap:8px; margin-bottom:14px; }
+.conversation { display:grid; gap:8px; margin:12px 0 14px; }
 .bubble { padding:11px 13px; border-radius:12px; line-height:1.55; }
 .bubble.owner { background:#f0efe9; margin-left:22px; }
 .bubble.ai { background:#fafafa; border:1px solid #eceae4; margin-right:22px; }
+.bubble-text { white-space:pre-wrap; }
+.bubble-reason { margin-top:7px; padding-top:7px; border-top:1px solid #ebe9e3; color:#666; font-size:12px; line-height:1.55; }
+.bubble-reason summary { cursor:pointer; font-weight:600; }
+.bubble-reason p { margin:6px 0 0; }
 .error,.file-errors { color:#9b2c2c; line-height:1.5; }
 .status { margin-top:10px; color:#555; line-height:1.55; }
 .file-progress { margin-top:14px; padding:13px; border:1px solid #e5e2da; border-radius:13px; background:#faf9f6; }
@@ -41,4 +48,5 @@ input[type=file] { width:100%; margin-top:8px; padding:12px; border:1px dashed #
 .finding h3 { margin:7px 0; font-size:18px; }
 .finding p { margin:7px 0; line-height:1.55; }
 .small { font-size:12px; }
+@media (max-width:420px) { .conversation-head { align-items:flex-start; } .quiet-button { max-width:118px; white-space:normal; } }
 @media (min-width:700px) { .shell { padding-top:48px; } .card { padding:24px; } .hero h1 { font-size:40px; } }
