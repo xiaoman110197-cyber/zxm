@@ -25,6 +25,13 @@ test('diagnosis can be resumed, retried, or explicitly restarted', () => {
   assert.match(js, /错误编号/);
 });
 
+test('starting a new diagnosis invalidates old AI and file async work', () => {
+  assert.match(js, /diagnosisRequestController/);
+  assert.match(js, /diagnosisRequestController\?\.abort\(\)/);
+  assert.match(js, /capturedDiagnosisId/);
+  assert.match(js, /state\.diagnosis\.id\s*!==\s*capturedDiagnosisId/);
+});
+
 test('AI follow-up can explain why the question matters without replacing the question', () => {
   assert.match(js, /为什么问这个/);
   assert.match(css, /bubble-reason/);
@@ -64,6 +71,11 @@ test('file analysis exposes live percent stage elapsed time cancel and retry', (
 test('file analysis failure keeps the previous successful business document available', () => {
   assert.match(js, /previousDocument/);
   assert.match(js, /上一次.*资料.*保留|此前.*资料.*保留/);
+});
+
+test('file parse status does not claim zero business anomalies before diagnosis has judged them', () => {
+  assert.match(js, /经营异常.*问诊|问诊.*经营异常/);
+  assert.doesNotMatch(js, /经营异常\s*\$\{summary\.anomalyCount\s*\|\|\s*0\}\s*个/);
 });
 
 test('file issue display groups repeated errors instead of dumping every code', () => {
