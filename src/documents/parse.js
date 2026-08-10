@@ -46,10 +46,12 @@ function assertSignature(extension, buffer) {
   }
 }
 
-function reportProgress(onProgress, phase, percent, message) {
+function reportProgress(onProgress, phase, percent, message, stage = '') {
   if (typeof onProgress !== 'function') return;
   const boundedPercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
-  onProgress({ phase, percent:boundedPercent, message });
+  const event = { phase, percent:boundedPercent, message };
+  if (stage) event.stage = stage;
+  onProgress(event);
 }
 
 function ocrProgressMessage(status = '') {
@@ -59,6 +61,15 @@ function ocrProgressMessage(status = '') {
   if (normalized.includes('initializing')) return '正在初始化文字识别';
   if (normalized.includes('recognizing text')) return '正在识别图片中的文字和数字';
   return '正在处理图片文字';
+}
+
+function ocrProgressStage(status = '') {
+  const normalized = String(status).toLowerCase();
+  if (normalized.includes('loading tesseract core')) return 'engine';
+  if (normalized.includes('loading language')) return 'language';
+  if (normalized.includes('initializing')) return 'initializing';
+  if (normalized.includes('recognizing text')) return 'recognizing';
+  return 'processing';
 }
 
 function mapOcrProgress(message = {}) {
@@ -221,12 +232,12 @@ export async function parseBusinessDocument({ name, buffer }, deps = {}) {
     };
   }
 
-  reportProgress(onProgress, 'ocr', 28, '准备图片文字识别');
+  reportProgress(onProgress, 'ocr', 28, '准备图片文字识别', 'preparing');
   const ocr = deps.imageOcr || defaultImageOcr;
   const extracted = await ocr(buffer, (message) => {
-    reportProgress(onProgress, 'ocr', mapOcrProgress(message), ocrProgressMessage(message?.status));
+    reportProgress(onProgress, 'ocr', mapOcrProgress(message), ocrProgressMessage(message?.status), ocrProgressStage(message?.status));
   });
-  reportProgress(onProgress, 'ocr', 88, '文字识别完成，正在整理识别结果');
+  reportProgress(onProgress, 'ocr', 88, '文字识别完成，正在整理识别结果', 'finalizing');
   const confidence = Number.isFinite(extracted.confidence) ? Math.max(0, Math.min(1, extracted.confidence)) : 0;
   const initialWarnings = [];
   if (confidence < 0.65) initialWarnings.push('图片文字识别置信度较低，请人工确认关键数字');
