@@ -54,6 +54,22 @@
 
       <div id="file-status" class="status" aria-live="polite"></div>
       <div id="file-errors" class="file-errors" aria-live="polite"></div>
+
+      <div id="file-review" class="file-review" hidden>
+        <div class="file-review-head">
+          <div>
+            <span class="eyebrow">识别确认</span>
+            <h3>请先确认识别内容</h3>
+          </div>
+          <span id="file-review-confidence" class="review-confidence"></span>
+        </div>
+        <p id="file-review-warning" class="review-warning"></p>
+        <div id="file-review-text" class="file-review-text" role="region" aria-label="图片识别内容"></div>
+        <div class="actions file-review-actions">
+          <button id="replace-file" type="button">重新上传</button>
+          <button id="confirm-file" type="button" class="primary">确认无误</button>
+        </div>
+      </div>
     </section>
 
     <section class="card report" id="report">
