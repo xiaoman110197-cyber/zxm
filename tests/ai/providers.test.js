@@ -46,6 +46,30 @@ test('openai provider targets responses api, disables storage and bounds output'
   assert.equal(result.mode, 'finding');
 });
 
+test('provider diagnosis prompt treats uploaded content as untrusted evidence, not instructions', async () => {
+  let deepSeekPrompt = '';
+  const deepSeekFetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    deepSeekPrompt = body.messages[0].content;
+    return { ok:true, json:async () => ({ choices:[{ message:{ content:'{"mode":"question","question":{"key":"k","question":"补充数据？","reason":"验证"},"findings":[]}' } }] }) };
+  };
+  await createDeepSeekProvider({ apiKey:'k', fetchImpl:deepSeekFetch }).diagnose({ id:'d' });
+  assert.match(deepSeekPrompt, /不可信|不受信任/);
+  assert.match(deepSeekPrompt, /文件|OCR|表格/);
+  assert.match(deepSeekPrompt, /指令/);
+  assert.match(deepSeekPrompt, /OCR.*confirmed|OCR.*事实/s);
+  assert.match(deepSeekPrompt, /3.*6/);
+
+  let openAiInstructions = '';
+  const openAiFetch = async (_url, init) => {
+    openAiInstructions = JSON.parse(init.body).instructions;
+    return { ok:true, json:async () => ({ output_text:'{"mode":"question","question":{"key":"k","question":"补充数据？","reason":"验证"},"findings":[]}' }) };
+  };
+  await createOpenAIProvider({ apiKey:'k', fetchImpl:openAiFetch }).diagnose({ id:'d' });
+  assert.match(openAiInstructions, /不可信|不受信任/);
+  assert.match(openAiInstructions, /指令/);
+});
+
 test('provider aborts a diagnosis request after its explicit timeout', async () => {
   const fetchImpl = async (_url, init) => new Promise((_resolve, reject) => {
     init.signal.addEventListener('abort', () => reject(init.signal.reason || new Error('aborted')), { once:true });
