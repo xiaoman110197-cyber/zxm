@@ -114,9 +114,21 @@ test('does not invent an exact summary gross margin from partial detail rows', (
     fact('sum','财务汇总行','总毛利率',182.5,'%')
   ]);
   const issue = issues.find((x) => x.title === '总毛利率异常');
+  assert.equal(issue.kind, 'anomaly');
+  assert.equal('correctedValue' in issue, false);
+  assert.match(issue.explanation, /完整.*汇总|无法.*正确/);
+});
+
+test('proves direct percentage addition when summary equals the visible row margins', () => {
+  const issues = inspectReportFacts([
+    fact('m1','华南大区','毛利率',85,'%'),
+    fact('m2','华北大区','毛利率',97.5,'%'),
+    fact('sum','财务汇总行','总毛利率',182.5,'%')
+  ]);
+  const issue = issues.find((x) => x.title === '总毛利率计算方式错误');
   assert.equal(issue.kind, 'logic_error');
   assert.equal('correctedValue' in issue, false);
-  assert.match(issue.explanation, /不能.*直接相加|完整.*汇总/);
+  assert.match(issue.explanation, /85.*97\.5.*182\.5|直接相加/);
 });
 
 test('corrects summary gross margin only when explicit summary revenue and cost prove it', () => {
