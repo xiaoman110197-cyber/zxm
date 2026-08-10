@@ -27,6 +27,27 @@ test('current Base64 upload transport blocks files above 3 MB before the request
   assert.match(js, /3\s*MB/);
 });
 
+test('file analysis exposes live percent stage elapsed time cancel and retry', () => {
+  assert.match(html, /id="file-progress"/);
+  assert.match(html, /role="progressbar"/);
+  assert.match(html, /id="file-progress-percent"/);
+  assert.match(html, /id="file-progress-message"/);
+  assert.match(html, /id="file-progress-elapsed"/);
+  assert.match(html, /id="cancel-file"/);
+  assert.match(html, /id="retry-file"/);
+  assert.match(js, /analyze-file\?stream=1/);
+  assert.match(js, /getReader\(\)/);
+  assert.match(js, /AbortController/);
+  assert.match(js, /pendingFile/);
+  assert.match(css, /progress-track/);
+  assert.match(css, /progress-bar/);
+});
+
+test('file analysis failure keeps the previous successful business document available', () => {
+  assert.match(js, /previousDocument/);
+  assert.match(js, /上一次.*资料.*保留|此前.*资料.*保留/);
+});
+
 test('file issue display groups repeated errors instead of dumping every code', () => {
   assert.match(js, /summarizeFileIssues/);
   assert.match(js, /Map\(/);
