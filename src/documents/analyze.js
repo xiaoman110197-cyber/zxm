@@ -1,4 +1,5 @@
 import { auditWorkbook } from '../audit/rules.js';
+import { RequestGuardError, strictBase64ToBuffer } from '../http/guards.js';
 import { parseBusinessDocument, supportedBusinessDocumentExtensions } from './parse.js';
 
 export const MAX_FILE_BYTES = 3 * 1024 * 1024;
@@ -80,17 +81,21 @@ function validatePayload(file) {
     throw new FileAnalysisError(415, '支持 Excel、CSV、PDF、Word DOCX 和 JPG/PNG 图片');
   }
 
-  let buffer;
   try {
-    buffer = Buffer.from(file.contentBase64, 'base64');
+    const buffer = strictBase64ToBuffer(file.contentBase64, {
+      maxBytes: MAX_FILE_BYTES,
+      label: '文件',
+      tooLargeMessage: '文件过大：当前版本单个文件最大支持 3 MB'
+    });
+    if (!buffer.length) throw new FileAnalysisError(422, '文件内容为空或无法解析');
+    return buffer;
   } catch (error) {
+    if (error instanceof FileAnalysisError) throw error;
+    if (error instanceof RequestGuardError) {
+      throw new FileAnalysisError(error.statusCode, error.userMessage, error.message);
+    }
     throw new FileAnalysisError(422, '文件内容损坏或无法解析', error instanceof Error ? error.message : String(error));
   }
-  if (!buffer.length) throw new FileAnalysisError(422, '文件内容为空或无法解析');
-  if (buffer.length > MAX_FILE_BYTES) {
-    throw new FileAnalysisError(413, '文件过大：当前版本单个文件最大支持 3 MB');
-  }
-  return buffer;
 }
 
 export async function analyzeUploadedBusinessFile(file, deps = {}) {
