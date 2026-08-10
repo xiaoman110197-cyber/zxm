@@ -1,4 +1,5 @@
 import { parseWorkbook } from '../audit/workbook.js';
+import { defaultImageOcr } from './ocr.js';
 
 const SUPPORTED = new Set(['.xlsx','.xls','.csv','.pdf','.docx','.jpg','.jpeg','.png']);
 const MAX_EXTRACTED_TEXT_CHARS = 12000;
@@ -167,22 +168,6 @@ async function defaultDocxTextExtractor(buffer) {
     text:String(result.value || '').trim(),
     warnings:(result.messages || []).map((message) => message.message || String(message))
   };
-}
-
-async function defaultImageOcr(buffer, reportOcrProgress) {
-  const { createWorker } = await import('tesseract.js');
-  const worker = await createWorker(['chi_sim','eng'], 1, {
-    logger: (message) => reportOcrProgress?.(message)
-  });
-  try {
-    const result = await worker.recognize(buffer);
-    return {
-      text:String(result.data?.text || '').trim(),
-      confidence:Math.max(0, Math.min(1, Number(result.data?.confidence || 0) / 100))
-    };
-  } finally {
-    await worker.terminate();
-  }
 }
 
 export async function parseBusinessDocument({ name, buffer }, deps = {}) {
