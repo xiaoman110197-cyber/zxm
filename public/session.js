@@ -5,14 +5,6 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function cloneJson(value, fallback) {
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return fallback;
-  }
-}
-
 function safeDialogue(dialogue) {
   if (!Array.isArray(dialogue)) return [];
   return dialogue.slice(-60).map((entry) => ({
@@ -24,9 +16,26 @@ function safeDialogue(dialogue) {
   })).filter((entry) => entry.text);
 }
 
+function safeStringList(value, maxItems = 20, maxChars = 1000) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-maxItems).filter((item) => typeof item === 'string').map((item) => item.slice(0, maxChars));
+}
+
 function safeFindings(findings) {
   if (!Array.isArray(findings)) return [];
-  return cloneJson(findings.slice(-12), []);
+  return findings.slice(-12).filter(isPlainObject).map((finding) => ({
+    title:String(finding.title || '').slice(0, 1000),
+    status:['confirmed','probable','hypothesis'].includes(finding.status) ? finding.status : 'hypothesis',
+    priority:['P0','P1','P2'].includes(finding.priority) ? finding.priority : 'P2',
+    evidence:safeStringList(finding.evidence),
+    confidence:Number.isFinite(finding.confidence) ? Math.max(0, Math.min(1, finding.confidence)) : 0,
+    impact:String(finding.impact || '').slice(0, 1000),
+    action:String(finding.action || '').slice(0, 2000),
+    metric:String(finding.metric || '').slice(0, 1000),
+    ...(typeof finding.crossModelStatus === 'string' ? { crossModelStatus:finding.crossModelStatus.slice(0, 80) } : {}),
+    ...(typeof finding.deterministic === 'boolean' ? { deterministic:finding.deterministic } : {}),
+    ...(Array.isArray(finding.missingEvidence) ? { missingEvidence:safeStringList(finding.missingEvidence) } : {})
+  }));
 }
 
 function safeAnswers(answers) {
