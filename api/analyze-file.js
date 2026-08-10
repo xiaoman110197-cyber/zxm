@@ -120,6 +120,8 @@ function applyBurstGuard(req, res, requestId, deps) {
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   const requestId = deps.requestId || randomUUID();
   const startedAt = Date.now();
+  const logInfo = deps.logInfo || console.info;
+  const logError = deps.logError || console.error;
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
   const file = req.body?.file;
   if (!file?.name || !file?.contentBase64) return jsonError(res, 400, 'file with name and contentBase64 is required', requestId);
@@ -143,31 +145,45 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
 
   const streamMode = isStreamRequest(req);
   const emitProgress = (event) => writeSse(res, 'progress', { requestId, ...event });
+  let lastLoggedPhase = '';
+  let lastLoggedPercent = -Infinity;
+  const observeProgress = (event = {}) => {
+    const phase = String(event.phase || 'unknown');
+    const percent = Math.max(0, Math.min(100, Math.round(Number(event.percent) || 0)));
+    if (phase !== lastLoggedPhase || percent >= lastLoggedPercent + 5 || percent === 100) {
+      logInfo('[analyze-file]', requestId, 'progress', phase, percent, Date.now() - startedAt);
+      lastLoggedPhase = phase;
+      lastLoggedPercent = percent;
+    }
+    deps.onProgress?.(event);
+    if (streamMode) emitProgress(event);
+  };
+
   if (streamMode) {
     startEventStream(res);
-    emitProgress({ phase:'preparing', percent:10, message:'文件已接收，准备分析' });
+    observeProgress({ phase:'preparing', percent:10, message:'文件已接收，准备分析' });
   }
 
   try {
     const parser = deps.parseBusinessDocument || parseBusinessDocument;
     const parserDeps = {
       ...deps,
-      onProgress: streamMode ? emitProgress : deps.onProgress
+      onProgress: observeProgress
     };
     const parsed = await parser({ name:file.name, buffer }, parserDeps);
-    if (streamMode) emitProgress({ phase:'audit', percent:90, message:'正在检查数据质量并整理结果' });
+    if (streamMode) observeProgress({ phase:'audit', percent:90, message:'正在检查数据质量并整理结果' });
     const payload = buildPayload(parsed, requestId);
 
-    console.info('[analyze-file]', requestId, 'complete', Date.now() - startedAt);
+    logInfo('[analyze-file]', requestId, 'complete', Date.now() - startedAt);
     if (streamMode) {
-      emitProgress({ phase:'complete', percent:100, message:'分析完成' });
+      observeProgress({ phase:'complete', percent:100, message:'分析完成' });
       writeSse(res, 'result', payload);
       res.end();
       return;
     }
     return res.status(200).json(payload);
   } catch (error) {
-    console.error('[analyze-file]', requestId, 'failed', Date.now() - startedAt, error?.name || 'Error');
+    logError('[analyze-file]', requestId, 'failed', Date.now() - startedAt, error?.name || 'Error');
     if (streamMode) {
       writeSse(res, 'error', { error:'文件损坏、格式不匹配或内容无法解析', requestId });
       res.end();
