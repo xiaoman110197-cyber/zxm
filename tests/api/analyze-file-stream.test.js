@@ -62,7 +62,7 @@ test('streaming file api returns a user-safe error record and ends the stream', 
   assert.equal(events.at(-1).type, 'error');
   assert.equal(events.at(-1).status, 422);
   assert.equal(events.at(-1).error, '文件损坏、格式不匹配或内容无法解析');
-  assert.equal(JSON.stringify(events), /internal parser details/.test(JSON.stringify(events)) ? 'leaked' : 'safe');
+  assert.equal(JSON.stringify(events).includes('internal parser details'), false);
   assert.equal(events.at(-1).detail, undefined);
   assert.equal(res.ended, true);
 });
