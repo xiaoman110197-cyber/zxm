@@ -19,6 +19,20 @@ test('deepseek provider uses official chat completions endpoint and v4 flash by 
   assert.equal(result.mode, 'question');
 });
 
+test('diagnosis prompt treats merchant-accepted deterministic corrections as the value to use', async () => {
+  let systemPrompt = '';
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    systemPrompt = body.messages[0].content;
+    return { ok:true, json:async () => ({ choices:[{ message:{ content:'{"mode":"question","question":{"key":"next","question":"下一步？","reason":"继续核实"},"findings":[]}' } }] }) };
+  };
+  const provider = createDeepSeekProvider({ apiKey:'k', fetchImpl });
+  await provider.diagnose({ id:'d1', evidence:['correction_decision:{"label":"毛利率","originalValue":68,"correctedValue":60,"decision":"accepted"}'] });
+  assert.match(systemPrompt, /accepted|采用正确值|订正/);
+  assert.match(systemPrompt, /kept_original|保留原数据/);
+  assert.match(systemPrompt, /优先|采用/);
+});
+
 test('deepseek provider can use v4 pro for review', async () => {
   let model;
   const fetchImpl = async (_url, init) => {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { auditWorkbook } from '../src/audit/rules.js';
+import { detectCalculationCorrections } from '../src/audit/corrections.js';
 import { parseBusinessDocument, supportedBusinessDocumentExtensions } from '../src/documents/parse.js';
 import { decodeBase64Strict } from '../src/http/base64.js';
 import { checkBurstLimit, requestClientKey } from '../src/http/guard.js';
@@ -68,11 +69,13 @@ function attachAuditSummary(document, audit) {
 function buildPayload(parsed, requestId) {
   const audit = parsed.workbook ? normalizeAudit(auditWorkbook(parsed.workbook)) : emptyAudit();
   const document = attachAuditSummary(parsed.document, audit);
+  const corrections = detectCalculationCorrections({ workbook:parsed.workbook, audit, document });
   const warnings = Array.isArray(document.warnings) ? document.warnings : [];
   return {
     requestId,
     document,
     audit,
+    corrections,
     summary: {
       fileType: document.type,
       sheetCount: parsed.workbook?.sheets?.length || 0,
@@ -81,6 +84,7 @@ function buildPayload(parsed, requestId) {
       warningCount: warnings.length,
       errorCount: audit.errors.length,
       anomalyCount: audit.anomalies.length,
+      correctionCount: corrections.length,
       confidence: typeof document.confidence === 'number' ? document.confidence : null,
       metrics: audit.metrics
     }

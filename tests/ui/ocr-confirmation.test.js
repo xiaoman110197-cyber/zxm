@@ -12,13 +12,12 @@ test('image OCR requires merchant confirmation before the document enters diagno
   assert.match(html, /id="file-errors"/);
   assert.match(html, /id="confirm-file"/);
   assert.match(html, /id="replace-file"/);
-  assert.match(html, /确认无误/);
+  assert.match(html, /确认并用于诊断/);
   assert.match(html, /重新上传/);
 
   assert.match(js, /pendingFileReview/);
   assert.match(js, /renderFileReview/);
-  assert.match(js, /summarizeFileIssues/);
-  assert.match(js, /识别提示：/);
+  assert.match(js, /buildFileReviewModel/);
   assert.match(js, /confirmPendingFileReview/);
   assert.match(js, /document\?*\.type\s*===\s*['"]image['"]/);
   assert.match(js, /识别结果可能存在误差/);
