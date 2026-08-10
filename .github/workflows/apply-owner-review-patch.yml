@@ -1,0 +1,36 @@
+name: Apply owner review evidence patch
+
+on:
+  push:
+    branches:
+      - feat/owner-readable-data-review
+    paths:
+      - scripts/apply-owner-review-evidence.mjs
+      - .github/workflows/apply-owner-review-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/owner-readable-data-review
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply targeted patch
+        run: node scripts/apply-owner-review-evidence.mjs
+      - name: Commit patched app
+        run: |
+          if git diff --quiet -- public/app.js; then
+            echo "Patch made no changes"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/app.js
+          git commit -m "feat: preserve merchant correction decisions"
+          git push origin HEAD:feat/owner-readable-data-review
