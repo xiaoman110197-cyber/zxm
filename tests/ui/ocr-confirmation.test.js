@@ -6,7 +6,7 @@ const html = await readFile(new URL('../../public/index.html', import.meta.url),
 const js = await readFile(new URL('../../public/app.js', import.meta.url), 'utf8');
 const css = await readFile(new URL('../../public/styles.css', import.meta.url), 'utf8');
 
-test('image OCR requires merchant confirmation before the document enters diagnosis', () => {
+test('image report review must be confirmed before trusted facts enter diagnosis', () => {
   assert.match(html, /id="file-review"/);
   assert.match(html, /id="file-review-text"/);
   assert.match(html, /id="file-errors"/);
@@ -17,11 +17,11 @@ test('image OCR requires merchant confirmation before the document enters diagno
 
   assert.match(js, /pendingFileReview/);
   assert.match(js, /renderFileReview/);
-  assert.match(js, /buildFileReviewModel/);
+  assert.match(js, /renderReportReview/);
   assert.match(js, /confirmPendingFileReview/);
   assert.match(js, /document\?*\.type\s*===\s*['"]image['"]/);
-  assert.match(js, /识别结果可能存在误差/);
-  assert.match(js, /请先确认识别内容/);
+  assert.match(js, /report_fact:/);
+  assert.match(js, /report_review_confirmation:/);
 
   assert.match(
     js,
@@ -29,7 +29,15 @@ test('image OCR requires merchant confirmation before the document enters diagno
   );
   assert.match(
     js,
-    /function commitSuccessfulFileAnalysis[\s\S]*?state\.diagnosis\.documents = \[result\.document\]/
+    /function confirmPendingFileReview[\s\S]*?commitSuccessfulFileAnalysis\(pending\.file, pending\.contentBase64, pending\.result, reviewEvidence\)/
+  );
+  assert.match(
+    js,
+    /function diagnosisDocument[\s\S]*?reportReview[\s\S]*?warnings:\['原始 OCR 全文未作为诊断事实传入；诊断使用已验证的结构化报表事实。'\]/
+  );
+  assert.match(
+    js,
+    /function commitSuccessfulFileAnalysis[\s\S]*?state\.diagnosis\.documents = \[diagnosisDocument\(result\)\]/
   );
 
   assert.match(css, /file-review/);
