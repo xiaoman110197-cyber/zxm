@@ -58,3 +58,17 @@ test('runtime provider normalizes a shorthand question string into the frontend 
   assert.equal(res.body.question.key, 'follow_up');
   assert.equal(res.body.question.reason, '先拆解亏损来自收入端还是成本端');
 });
+
+test('terminal diagnosis failures expose a request id but not upstream error detail', async () => {
+  const req = { method:'POST', body:{ diagnosis:{ id:'d1', answers:{ owner_turn_1:'利润下降' }, evidence:[], findings:[], documents:[] } } };
+  const res = mockRes();
+  await handleDiagnosisRequest(req, res, {
+    primaryProvider: { name:'deepseek', diagnose: async () => { throw new Error('upstream secret-looking detail'); } },
+    reviewerProvider: null
+  });
+  assert.equal(res.statusCode, 502);
+  assert.equal(typeof res.body.requestId, 'string');
+  assert.ok(res.body.requestId.length >= 8);
+  assert.equal(res.body.detail, undefined);
+  assert.doesNotMatch(JSON.stringify(res.body), /secret-looking/);
+});
