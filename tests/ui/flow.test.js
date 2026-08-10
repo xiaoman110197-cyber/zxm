@@ -68,6 +68,12 @@ test('file analysis exposes live percent stage elapsed time cancel and retry', (
   assert.match(css, /progress-bar/);
 });
 
+test('slow image OCR explains why it may take longer instead of looking frozen', () => {
+  assert.match(js, /45/);
+  assert.match(js, /图片文字识别仍在进行|首次加载中文识别资源/);
+  assert.match(js, /\.jpe?g|\.png/);
+});
+
 test('file analysis failure keeps the previous successful business document available', () => {
   assert.match(js, /previousDocument/);
   assert.match(js, /上一次.*资料.*保留|此前.*资料.*保留/);
