@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createDeepSeekProvider, createOpenAIProvider } from '../src/ai/providers.js';
 import { crossReviewDiagnosis } from '../src/ai/cross-review.js';
 import { boundDiagnosisContext } from '../src/ai/context.js';
+import { checkBurstLimit } from '../src/http/guard.js';
 
 const FINDING_STATUSES = new Set(['confirmed', 'probable', 'hypothesis']);
 const PRIORITIES = new Set(['P0', 'P1', 'P2']);
@@ -110,6 +111,28 @@ function injectedOrRuntime(deps, key, runtimeValue) {
   return Object.prototype.hasOwnProperty.call(deps, key) ? deps[key] : runtimeValue;
 }
 
+function headerValue(req, name) {
+  const value = req.headers?.[name];
+  if (Array.isArray(value)) return value[0] || '';
+  return typeof value === 'string' ? value : '';
+}
+
+function clientIdentity(req) {
+  const raw = headerValue(req, 'x-vercel-forwarded-for') || headerValue(req, 'x-forwarded-for');
+  const ip = raw.split(',')[0]?.trim();
+  return ip ? `diagnosis:${ip.slice(0, 80)}` : '';
+}
+
+function applyBurstGuard(req, res, requestId, deps) {
+  if (deps.disableBurstGuard) return null;
+  const identity = clientIdentity(req);
+  if (!identity) return null;
+  const result = checkBurstLimit(identity, { limit:40, windowMs:10 * 60 * 1000 });
+  if (result.allowed) return null;
+  res.setHeader?.('Retry-After', String(result.retryAfterSeconds));
+  return jsonError(res, 429, '请求较频繁，请稍后再试', requestId);
+}
+
 // Kept for compatibility with existing tests and callers; new runtime routing uses providers below.
 export async function callOpenAiDiagnosis(diagnosis, { apiKey, fetchImpl = fetch, model = process.env.OPENAI_MODEL || 'gpt-5-mini' } = {}) {
   const response = await fetchImpl('https://api.openai.com/v1/responses', {
@@ -188,6 +211,8 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
   const diagnosis = req.body?.diagnosis;
   if (!diagnosis || typeof diagnosis !== 'object' || !diagnosis.id) return jsonError(res, 400, 'diagnosis is required', requestId);
+  const limited = applyBurstGuard(req, res, requestId, deps);
+  if (limited) return limited;
   const providerDiagnosis = boundDiagnosisContext(diagnosis);
 
   // Legacy injection path retained for existing tests and isolated mocking.
