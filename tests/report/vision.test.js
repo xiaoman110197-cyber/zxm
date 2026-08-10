@@ -44,6 +44,21 @@ test('returns an explicit non-fatal fallback when no vision key exists', async (
   });
 });
 
+test('surfaces a safe diagnostic code when the vision API returns an HTTP error', async () => {
+  const logged = [];
+  const fetchImpl = async () => ({ ok:false, status:401, json:async () => ({}) });
+  const result = await analyzeReportImage(
+    { name:'report.png', buffer:Buffer.from('x'), mimeType:'image/png', ocrText:'' },
+    { apiKey:'bad-key', fetchImpl, logWarn:(...args) => logged.push(args) }
+  );
+
+  assert.equal(result.available, false);
+  assert.equal(result.failureCode, 'VISION_HTTP_401');
+  assert.match(result.warning, /VISION_HTTP_401/);
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].includes('bad-key'), false);
+});
+
 test('drops malformed model facts and never accepts a model supplied corrected value', async () => {
   const fetchImpl = async () => ({
     ok:true,
