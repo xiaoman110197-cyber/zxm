@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { auditWorkbook } from '../src/audit/rules.js';
 import { parseBusinessDocument, supportedBusinessDocumentExtensions } from '../src/documents/parse.js';
+import { decodeBase64Strict } from '../src/http/base64.js';
 
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
 const MAX_CONTEXT_ISSUES = 10;
@@ -119,11 +120,10 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
 
   let buffer;
   try {
-    buffer = Buffer.from(file.contentBase64, 'base64');
+    buffer = decodeBase64Strict(file.contentBase64);
   } catch {
     return jsonError(res, 422, '文件内容损坏或无法解析', requestId);
   }
-  if (!buffer.length) return jsonError(res, 422, '文件内容为空或无法解析', requestId);
   if (buffer.length > MAX_FILE_BYTES) {
     return jsonError(res, 413, '文件过大：当前版本单个文件最大支持 3 MB', requestId);
   }
