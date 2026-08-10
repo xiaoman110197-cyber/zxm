@@ -27,6 +27,23 @@ test('report api rejects requests without original workbook', async () => {
   assert.match(res.body.error, /file|workbook|Excel/i);
 });
 
+test('report api rejects malformed Base64 source files', async () => {
+  const handleReportRequest = await loadHandler();
+  const res = mockRes();
+  await handleReportRequest({ method:'POST', body:{ file:{ name:'bad.xlsx', contentBase64:'%%%bad%%%' }, audit:{}, findings:[] } }, res);
+  assert.equal(res.statusCode, 422);
+  assert.match(res.body.error, /无法读取|损坏|编码/);
+});
+
+test('report api rejects decoded source workbooks above 3 MB', async () => {
+  const handleReportRequest = await loadHandler();
+  const res = mockRes();
+  const contentBase64 = Buffer.alloc(3 * 1024 * 1024 + 1, 0x61).toString('base64');
+  await handleReportRequest({ method:'POST', body:{ file:{ name:'large.xlsx', contentBase64 }, audit:{}, findings:[] } }, res);
+  assert.equal(res.statusCode, 413);
+  assert.match(res.body.error, /3\s*MB|过大/);
+});
+
 test('report api returns a real xlsx preserving original sheets and adding analysis sheets', async () => {
   const handleReportRequest = await loadHandler();
   const res = mockRes();
