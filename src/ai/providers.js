@@ -23,29 +23,45 @@ function parseJson(text, providerName) {
 
 async function ensureOk(response, providerName) {
   if (response.ok) return;
-  let detail = '';
-  try { detail = await response.text(); } catch {}
-  throw new Error(`${providerName} request failed (${response.status ?? 'unknown'}): ${detail.slice(0, 300)}`);
+  throw new Error(`${providerName} request failed (${response.status ?? 'unknown'})`);
+}
+
+async function fetchWithTimeout(fetchImpl, url, init, timeoutMs, providerName) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...init, signal:controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted || error?.name === 'AbortError') {
+      throw new Error(`${providerName} request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function createDeepSeekProvider({
   apiKey = process.env.DEEPSEEK_API_KEY || '',
   model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
-  fetchImpl = fetch
+  fetchImpl = fetch,
+  timeoutMs = 12000,
+  maxOutputTokens = 2500
 } = {}) {
   if (!apiKey) throw new Error('Server is missing DEEPSEEK_API_KEY');
 
   async function request(messages) {
-    const response = await fetchImpl('https://api.deepseek.com/chat/completions', {
+    const response = await fetchWithTimeout(fetchImpl, 'https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
         messages,
         response_format: { type: 'json_object' },
+        max_tokens: maxOutputTokens,
         stream: false
       })
-    });
+    }, timeoutMs, 'DeepSeek');
     await ensureOk(response, 'DeepSeek');
     const payload = await response.json();
     const content = payload?.choices?.[0]?.message?.content;
@@ -74,21 +90,24 @@ export function createDeepSeekProvider({
 export function createOpenAIProvider({
   apiKey = process.env.OPENAI_API_KEY || '',
   model = process.env.OPENAI_MODEL || 'gpt-5-mini',
-  fetchImpl = fetch
+  fetchImpl = fetch,
+  timeoutMs = 12000,
+  maxOutputTokens = 2500
 } = {}) {
   if (!apiKey) throw new Error('Server is missing OPENAI_API_KEY');
 
   async function request(instructions, input) {
-    const response = await fetchImpl('https://api.openai.com/v1/responses', {
+    const response = await fetchWithTimeout(fetchImpl, 'https://api.openai.com/v1/responses', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
         instructions,
         input: JSON.stringify(input),
+        max_output_tokens: maxOutputTokens,
         text: { format: { type: 'json_object' } }
       })
-    });
+    }, timeoutMs, 'OpenAI');
     await ensureOk(response, 'OpenAI');
     const payload = await response.json();
     if (typeof payload?.output_text !== 'string' || !payload.output_text.trim()) throw new Error('OpenAI response has no output_text');
