@@ -1,4 +1,5 @@
 const EPSILON = 0.001;
+const MIN_IMAGE_CONFIDENCE_FOR_AUTOCORRECTION = 0.65;
 
 function numberFromToken(token) {
   const raw = String(token || '').trim();
@@ -88,10 +89,23 @@ function metricConfirmation(label, metrics, uncertainNames) {
   };
 }
 
+function lowOverallConfidenceConfirmation(label, originalValue, confidence, evidence = []) {
+  const percent = Math.round(confidence * 100);
+  return {
+    kind:'needs_confirmation',
+    label,
+    originalValue,
+    explanation:`这张图片整体识别质量只有 ${percent}%，请先确认用于计算的原数字，再判断是否需要订正。`,
+    evidence
+  };
+}
+
 function imageCorrections(document) {
   if (document?.type !== 'image' || !document.text) return [];
   const segments = Array.isArray(document.uncertainSegments) ? document.uncertainSegments : [];
   const text = document.text;
+  const overallConfidence = Number(document.confidence);
+  const overallConfidenceLow = Number.isFinite(overallConfidence) && overallConfidence < MIN_IMAGE_CONFIDENCE_FOR_AUTOCORRECTION;
   const metrics = {
     营业额: extractMetric(text, ['月营业额','营业额','销售额','收入']),
     成本: extractMetric(text, ['总成本','成本']),
@@ -108,15 +122,20 @@ function imageCorrections(document) {
     const uncertain = involved.filter((name) => metricIsUncertain(metrics[name], segments));
     const expected = round(metrics.营业额.value - metrics.成本.value, 2);
     if (materiallyDifferent(metrics.毛利.value, expected)) {
-      if (uncertain.length) items.push(metricConfirmation('毛利', metrics, uncertain));
-      else items.push({
-        kind:'calculation_error',
-        label:'毛利',
-        originalValue:metrics.毛利.value,
-        correctedValue:expected,
-        explanation:`按营业额 ${metrics.营业额.value} 减去成本 ${metrics.成本.value} 计算，毛利应为 ${expected}。`,
-        evidence:[`营业额：${metrics.营业额.value}`, `成本：${metrics.成本.value}`]
-      });
+      if (overallConfidenceLow) {
+        items.push(lowOverallConfidenceConfirmation('毛利', metrics.毛利.value, overallConfidence, involved.map((name) => `${name}：${metrics[name]?.token || '待确认'}`)));
+      } else if (uncertain.length) {
+        items.push(metricConfirmation('毛利', metrics, uncertain));
+      } else {
+        items.push({
+          kind:'calculation_error',
+          label:'毛利',
+          originalValue:metrics.毛利.value,
+          correctedValue:expected,
+          explanation:`按营业额 ${metrics.营业额.value} 减去成本 ${metrics.成本.value} 计算，毛利应为 ${expected}。`,
+          evidence:[`营业额：${metrics.营业额.value}`, `成本：${metrics.成本.value}`]
+        });
+      }
     }
   }
 
@@ -126,15 +145,20 @@ function imageCorrections(document) {
     const grossProfit = metrics.营业额.value - metrics.成本.value;
     const expected = round(grossProfit / metrics.营业额.value * 100, 2);
     if (materiallyDifferent(metrics.毛利率.value, expected, 0.05)) {
-      if (uncertain.length) items.push(metricConfirmation('毛利率', metrics, uncertain));
-      else items.push({
-        kind:'calculation_error',
-        label:'毛利率',
-        originalValue:metrics.毛利率.value,
-        correctedValue:expected,
-        explanation:`营业额 ${metrics.营业额.value}，成本 ${metrics.成本.value}，毛利应为 ${round(grossProfit, 2)}，所以毛利率应为 ${expected}%。`,
-        evidence:[`营业额：${metrics.营业额.value}`, `成本：${metrics.成本.value}`, `毛利：${round(grossProfit, 2)}`]
-      });
+      if (overallConfidenceLow) {
+        items.push(lowOverallConfidenceConfirmation('毛利率', metrics.毛利率.value, overallConfidence, involved.map((name) => `${name}：${metrics[name]?.token || '待确认'}`)));
+      } else if (uncertain.length) {
+        items.push(metricConfirmation('毛利率', metrics, uncertain));
+      } else {
+        items.push({
+          kind:'calculation_error',
+          label:'毛利率',
+          originalValue:metrics.毛利率.value,
+          correctedValue:expected,
+          explanation:`营业额 ${metrics.营业额.value}，成本 ${metrics.成本.value}，毛利应为 ${round(grossProfit, 2)}，所以毛利率应为 ${expected}%。`,
+          evidence:[`营业额：${metrics.营业额.value}`, `成本：${metrics.成本.value}`, `毛利：${round(grossProfit, 2)}`]
+        });
+      }
     }
   }
 
@@ -150,7 +174,9 @@ function imageCorrections(document) {
     const uncertain = Object.keys(reliabilityMetrics).filter((name) => metricIsUncertain(reliabilityMetrics[name], segments));
     const estimate = round(metrics.日均订单.value * metrics.客单价.value * metrics.营业天数.value, 2);
     if (materiallyDifferent(monthlyMetric.value, estimate)) {
-      if (uncertain.length) {
+      if (overallConfidenceLow) {
+        items.push(lowOverallConfidenceConfirmation('月营业额与订单估算', monthlyMetric.value, overallConfidence, Object.keys(reliabilityMetrics).map((name) => `${name}：${reliabilityMetrics[name]?.token || '待确认'}`)));
+      } else if (uncertain.length) {
         items.push({
           kind:'needs_confirmation',
           label:'月营业额与订单估算',
