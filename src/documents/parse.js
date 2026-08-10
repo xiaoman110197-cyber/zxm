@@ -4,6 +4,12 @@ const SUPPORTED = new Set(['.xlsx','.xls','.csv','.pdf','.docx','.jpg','.jpeg','
 const MAX_EXTRACTED_TEXT_CHARS = 12000;
 const TRUNCATION_MARKER = '\n…[中间内容已截断]…\n';
 const TRUNCATION_WARNING = '文档内容过长，当前诊断仅保留开头和结尾部分；关键内容请人工确认或拆分文件上传';
+const MAX_PREVIEW_SHEETS = 6;
+const MAX_PREVIEW_ROWS_PER_SHEET = 6;
+const MAX_PREVIEW_COLUMNS = 12;
+const MAX_PREVIEW_CELL_CHARS = 120;
+const MAX_STRUCTURED_PREVIEW_CHARS = 8000;
+const STRUCTURED_PREVIEW_WARNING = '表格数据较多，AI 诊断上下文仅保留有限样本；完整表格仍用于程序化数据审计';
 
 function extensionOf(name) {
   const lower = String(name || '').toLowerCase();
@@ -51,17 +57,67 @@ function boundExtractedText(value, initialWarnings = []) {
   };
 }
 
+function sampleRows(rows) {
+  if (rows.length <= MAX_PREVIEW_ROWS_PER_SHEET) return rows;
+  const headCount = Math.ceil(MAX_PREVIEW_ROWS_PER_SHEET / 2);
+  const tailCount = Math.floor(MAX_PREVIEW_ROWS_PER_SHEET / 2);
+  return [...rows.slice(0, headCount), ...rows.slice(-tailCount)];
+}
+
+function clipPreviewValue(value) {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value !== 'string') return value;
+  if (value.length <= MAX_PREVIEW_CELL_CHARS) return value;
+  return `${value.slice(0, MAX_PREVIEW_CELL_CHARS - 1)}…`;
+}
+
+function buildStructuredPreview(workbook) {
+  const preview = [];
+  let remaining = MAX_STRUCTURED_PREVIEW_CHARS;
+  let truncated = workbook.sheets.length > MAX_PREVIEW_SHEETS;
+
+  for (const sheet of workbook.sheets.slice(0, MAX_PREVIEW_SHEETS)) {
+    const headers = sheet.headers.slice(0, MAX_PREVIEW_COLUMNS);
+    if (sheet.headers.length > headers.length || sheet.rows.length > MAX_PREVIEW_ROWS_PER_SHEET) truncated = true;
+    const rows = [];
+
+    for (const sourceRow of sampleRows(sheet.rows)) {
+      const row = {};
+      for (const header of headers) row[header] = clipPreviewValue(sourceRow[header]);
+      const estimated = JSON.stringify(row).length;
+      if (estimated > remaining) {
+        truncated = true;
+        break;
+      }
+      rows.push(row);
+      remaining -= estimated;
+    }
+
+    preview.push({ name:sheet.name, rows });
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+  }
+
+  return { preview, truncated };
+}
+
 function sheetDocument(name, extension, workbook) {
   const type = extension === '.csv' ? 'csv' : 'excel';
+  const bounded = buildStructuredPreview(workbook);
   return {
     document: {
       name,
+      source: { kind:'upload', name },
       type,
       structured: true,
       confidence: 1,
-      warnings: [],
+      warnings: bounded.truncated ? [STRUCTURED_PREVIEW_WARNING] : [],
       sheetNames: workbook.sheets.map((sheet) => sheet.name),
-      sheets: workbook.sheets.map((sheet) => ({ name:sheet.name, headers:sheet.headers, rowCount:sheet.rows.length }))
+      sheets: workbook.sheets.map((sheet) => ({ name:sheet.name, headers:sheet.headers, rowCount:sheet.rows.length })),
+      preview: bounded.preview,
+      previewTruncated: bounded.truncated
     },
     workbook
   };
@@ -120,7 +176,7 @@ export async function parseBusinessDocument({ name, buffer }, deps = {}) {
     if (!extracted.text) initialWarnings.push('PDF 未提取到可用文字；扫描件可能需要图片识别');
     const bounded = boundExtractedText(extracted.text, initialWarnings);
     return {
-      document:{ name, type:'pdf', structured:false, confidence:bounded.text ? 1 : 0, text:bounded.text, truncated:bounded.truncated, pageCount:extracted.pageCount ?? null, warnings:bounded.warnings },
+      document:{ name, source:{kind:'upload',name}, type:'pdf', structured:false, confidence:bounded.text ? 1 : 0, text:bounded.text, truncated:bounded.truncated, pageCount:extracted.pageCount ?? null, warnings:bounded.warnings },
       workbook:null
     };
   }
@@ -132,7 +188,7 @@ export async function parseBusinessDocument({ name, buffer }, deps = {}) {
     if (!extracted.text) initialWarnings.push('Word 文档未提取到可用文字');
     const bounded = boundExtractedText(extracted.text, initialWarnings);
     return {
-      document:{ name, type:'docx', structured:false, confidence:bounded.text ? 1 : 0, text:bounded.text, truncated:bounded.truncated, warnings:bounded.warnings },
+      document:{ name, source:{kind:'upload',name}, type:'docx', structured:false, confidence:bounded.text ? 1 : 0, text:bounded.text, truncated:bounded.truncated, warnings:bounded.warnings },
       workbook:null
     };
   }
@@ -145,7 +201,7 @@ export async function parseBusinessDocument({ name, buffer }, deps = {}) {
   if (!extracted.text) initialWarnings.push('图片未识别到可用文字');
   const bounded = boundExtractedText(extracted.text, initialWarnings);
   return {
-    document:{ name, type:'image', structured:false, confidence, text:bounded.text, truncated:bounded.truncated, warnings:bounded.warnings },
+    document:{ name, source:{kind:'upload',name}, type:'image', structured:false, confidence, text:bounded.text, truncated:bounded.truncated, warnings:bounded.warnings },
     workbook:null
   };
 }
