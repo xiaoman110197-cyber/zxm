@@ -18,13 +18,39 @@ test('business-material upload is optional and exposes five mainstream categorie
   assert.match(html, /type="file"/);
   assert.match(html, /可选|选填/);
   for (const extension of ['.xlsx','.xls','.csv','.pdf','.docx','.jpg','.jpeg','.png']) assert.match(html, new RegExp(extension.replace('.', '\\.')));
-  assert.match(js, /\/api\/analyze-file/);
+  assert.match(js, /\/api\/analyze-file-stream/);
 });
 
 test('current Base64 upload transport blocks files above 3 MB before the request', () => {
   assert.match(js, /MAX_FILE_BYTES\s*=\s*3\s*\*\s*1024\s*\*\s*1024/);
   assert.match(js, /file\.size\s*>\s*MAX_FILE_BYTES/);
   assert.match(js, /3\s*MB/);
+});
+
+test('file analysis exposes percentage, stage and accessible progressbar', () => {
+  assert.match(html, /role="progressbar"/);
+  assert.match(html, /id="file-progress-percent"/);
+  assert.match(html, /id="file-progress-stage"/);
+  assert.match(html, /id="file-progress-fill"/);
+  assert.match(js, /setFileProgress/);
+  assert.match(js, /aria-valuenow/);
+  assert.match(css, /file-progress/);
+});
+
+test('file upload retries one network interruption and supports manual retry', () => {
+  assert.match(html, /id="retry-file"/);
+  assert.match(js, /AbortController/);
+  assert.match(js, /自动重试（1\/1）/);
+  assert.match(js, /重新分析/);
+  assert.match(js, /retryFile/);
+  assert.match(js, /Load failed|Failed to fetch/);
+});
+
+test('file upload ignores stale responses and clears prior file evidence', () => {
+  assert.match(js, /fileRequestId/);
+  assert.match(js, /requestId\s*!==\s*state\.fileRequestId/);
+  assert.match(js, /file_analysis:/);
+  assert.match(js, /filter\([^\n]+file_analysis:/);
 });
 
 test('file issue display groups repeated errors instead of dumping every code', () => {
