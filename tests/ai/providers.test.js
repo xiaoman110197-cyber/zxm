@@ -14,6 +14,8 @@ test('deepseek provider uses official chat completions endpoint and v4 flash by 
   assert.equal(request.body.model, 'deepseek-v4-flash');
   assert.equal(request.init.headers.Authorization, 'Bearer test-key');
   assert.equal(request.body.response_format.type, 'json_object');
+  assert.equal(request.body.max_tokens, 2500);
+  assert.ok(request.init.signal);
   assert.equal(result.mode, 'question');
 });
 
@@ -29,15 +31,31 @@ test('deepseek provider can use v4 pro for review', async () => {
 });
 
 test('openai provider targets responses api and parses output_text', async () => {
-  let url;
-  const fetchImpl = async (requestUrl) => {
-    url = requestUrl;
+  let request;
+  const fetchImpl = async (requestUrl, init) => {
+    request = { url:requestUrl, init, body:JSON.parse(init.body) };
     return { ok: true, json: async () => ({ output_text: '{"mode":"finding","question":null,"findings":[]}' }) };
   };
   const provider = createOpenAIProvider({ apiKey: 'openai-key', fetchImpl, model: 'gpt-5-mini' });
   const result = await provider.diagnose({ id: 'd1' });
-  assert.equal(url, 'https://api.openai.com/v1/responses');
+  assert.equal(request.url, 'https://api.openai.com/v1/responses');
+  assert.equal(request.body.max_output_tokens, 2500);
+  assert.ok(request.init.signal);
   assert.equal(result.mode, 'finding');
+});
+
+test('provider aborts an upstream request after its configured timeout', async () => {
+  const fetchImpl = async (_url, init) => new Promise((_resolve, reject) => {
+    const guard = setTimeout(() => reject(new Error('fetch stub did not receive timely abort')), 80);
+    init.signal?.addEventListener('abort', () => {
+      clearTimeout(guard);
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      reject(error);
+    }, { once:true });
+  });
+  const provider = createDeepSeekProvider({ apiKey:'k', fetchImpl, timeoutMs:10 });
+  await assert.rejects(() => provider.diagnose({ id:'d1' }), /timeout|timed out|超时/i);
 });
 
 test('provider fails clearly when api key is missing', () => {
