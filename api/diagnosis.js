@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { createDeepSeekProvider, createOpenAIProvider } from '../src/ai/providers.js';
 import { crossReviewDiagnosis } from '../src/ai/cross-review.js';
 
@@ -100,8 +101,12 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function logDiagnosisError(stage, error) {
-  console.error('[diagnosis]', stage, errorMessage(error));
+function logDiagnosisError(stage, error, requestId, startedAt) {
+  console.error('[diagnosis]', requestId, stage, Date.now() - startedAt, error?.name || 'Error');
+}
+
+function jsonError(res, status, error, requestId) {
+  return res.status(status).json({ error, requestId });
 }
 
 // Kept for compatibility with existing tests and callers; new runtime routing uses providers below.
@@ -149,20 +154,23 @@ function buildRuntimeProviders() {
 }
 
 export async function handleDiagnosisRequest(req, res, deps = {}) {
-  if (req.method && req.method !== 'POST') return res.status(405).json({ error:'Method not allowed' });
+  const requestId = deps.requestId || randomUUID();
+  const startedAt = Date.now();
+  if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
   const diagnosis = req.body?.diagnosis;
-  if (!diagnosis || typeof diagnosis !== 'object' || !diagnosis.id) return res.status(400).json({ error:'diagnosis is required' });
+  if (!diagnosis || typeof diagnosis !== 'object' || !diagnosis.id) return jsonError(res, 400, 'diagnosis is required', requestId);
 
   // Legacy injection path retained for existing tests and isolated mocking.
   if ('ai' in deps || 'apiKey' in deps) {
     const apiKey = deps.apiKey ?? process.env.OPENAI_API_KEY ?? '';
-    if (!apiKey) return res.status(503).json({ error:'Server is missing OPENAI_API_KEY' });
+    if (!apiKey) return jsonError(res, 503, 'Server is missing OPENAI_API_KEY', requestId);
     try {
       const ai = deps.ai || ((value) => callOpenAiDiagnosis(value, { apiKey }));
-      return res.status(200).json(validateAiResult(normalizeAiResult(await ai(diagnosis))));
+      const result = validateAiResult(normalizeAiResult(await ai(diagnosis)));
+      return res.status(200).json({ ...result, requestId });
     } catch (error) {
-      logDiagnosisError('legacy-provider', error);
-      return res.status(502).json({ error:'AI diagnosis failed', detail:errorMessage(error) });
+      logDiagnosisError('legacy-provider', error, requestId, startedAt);
+      return jsonError(res, 502, 'AI diagnosis failed', requestId);
     }
   }
 
@@ -170,7 +178,7 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
   const primaryProvider = deps.primaryProvider || runtime.primaryProvider;
   const reviewerProvider = deps.reviewerProvider || runtime.reviewerProvider;
   if (!primaryProvider?.diagnose) {
-    return res.status(503).json({ error:'Server is missing AI provider key (DEEPSEEK_API_KEY or OPENAI_API_KEY)' });
+    return jsonError(res, 503, 'Server is missing AI provider key (DEEPSEEK_API_KEY or OPENAI_API_KEY)', requestId);
   }
 
   try {
@@ -183,10 +191,11 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
       }
       validateAiResult(result);
     }
-    return res.status(200).json(result);
+    console.info('[diagnosis]', requestId, 'complete', primaryProvider?.name || 'unknown', Date.now() - startedAt);
+    return res.status(200).json({ ...result, requestId });
   } catch (error) {
-    logDiagnosisError(`runtime-provider:${primaryProvider?.name || 'unknown'}`, error);
-    return res.status(502).json({ error:'AI diagnosis failed', detail:errorMessage(error) });
+    logDiagnosisError(`runtime-provider:${primaryProvider?.name || 'unknown'}`, error, requestId, startedAt);
+    return jsonError(res, 502, 'AI diagnosis failed', requestId);
   }
 }
 
