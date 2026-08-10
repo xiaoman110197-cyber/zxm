@@ -7,6 +7,21 @@ function mockRes() {
   return { statusCode: 200, body: null, status(code){ this.statusCode = code; return this; }, json(value){ this.body = value; return this; } };
 }
 
+function mockStreamRes() {
+  return {
+    statusCode: 200,
+    headers: {},
+    chunks: [],
+    ended: false,
+    status(code){ this.statusCode = code; return this; },
+    setHeader(name, value){ this.headers[String(name).toLowerCase()] = value; },
+    flushHeaders(){},
+    write(value){ this.chunks.push(String(value)); return true; },
+    end(value){ if (value) this.chunks.push(String(value)); this.ended = true; return this; },
+    json(value){ this.body = value; this.ended = true; return this; }
+  };
+}
+
 function workbookBase64() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{ 订单号:'A001', 营业额:100 }, { 订单号:'A001', 营业额:100 }]), '订单明细');
@@ -36,6 +51,27 @@ test('file api analyzes all Excel sheets and returns deterministic audit', async
   assert.ok(res.body.audit.errors.some(e => e.type === 'duplicate'));
   assert.ok(res.body.audit.errors.some(e => e.type === 'cross_sheet_mismatch'));
   assert.equal(res.body.summary.sheetCount, 2);
+});
+
+test('stream mode emits progress before the final result', async () => {
+  const res = mockStreamRes();
+  const req = { method:'POST', query:{ stream:'1' }, body:{ file:{ name:'订单.csv', contentBase64:Buffer.from('订单号,营业额\nA001,100', 'utf8').toString('base64') } } };
+  await handleAnalyzeFileRequest(req, res, {
+    parseBusinessDocument: async (_input, parserDeps) => {
+      parserDeps.onProgress?.({ phase:'parsing', percent:45, message:'正在读取表格数据' });
+      return {
+        document:{ name:'订单.csv', type:'csv', structured:true, confidence:1, warnings:[], sheets:[], sheetNames:[], preview:[] },
+        workbook:{ sheets:[], relations:[] }
+      };
+    }
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.ended, true);
+  const payload = res.chunks.join('');
+  const progressIndex = payload.indexOf('event: progress');
+  const resultIndex = payload.indexOf('event: result');
+  assert.ok(progressIndex >= 0, payload);
+  assert.ok(resultIndex > progressIndex, payload);
 });
 
 test('structured upload gives AI bounded row evidence and a concise audit summary', async () => {
