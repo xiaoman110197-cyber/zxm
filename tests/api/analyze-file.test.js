@@ -74,6 +74,18 @@ test('stream mode emits progress before the final result', async () => {
   assert.ok(resultIndex > progressIndex, payload);
 });
 
+test('stream failures expose a request id without leaking parser detail', async () => {
+  const res = mockStreamRes();
+  const req = { method:'POST', query:{ stream:'1' }, body:{ file:{ name:'订单.csv', contentBase64:Buffer.from('订单号,营业额\nA001,100', 'utf8').toString('base64') } } };
+  await handleAnalyzeFileRequest(req, res, {
+    parseBusinessDocument: async () => { throw new Error('sensitive parser internals'); }
+  });
+  const payload = res.chunks.join('');
+  assert.match(payload, /event: error/);
+  assert.match(payload, /requestId/);
+  assert.doesNotMatch(payload, /sensitive parser internals/);
+});
+
 test('structured upload gives AI bounded row evidence and a concise audit summary', async () => {
   const res = mockRes();
   await handleAnalyzeFileRequest({ method:'POST', body:{ file:{ name:'经营报表.xlsx', contentBase64:workbookBase64() } } }, res);
