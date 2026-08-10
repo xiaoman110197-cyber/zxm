@@ -12,13 +12,17 @@ test('upload review uses plain-language sections instead of one long warning blo
   assert.match(html, /id="file-review-important"/);
   assert.match(html, /id="file-review-other"/);
   assert.match(html, /id="file-review-fulltext"/);
+  assert.match(html, /发现计算错误/);
+  assert.match(html, /需要你确认/);
   assert.match(html, /确认并用于诊断/);
   assert.match(html, /其他疑似识别问题/);
   assert.match(html, /查看完整识别文字/);
 
   assert.match(js, /buildFileReviewModel/);
-  assert.match(js, /发现计算错误/);
-  assert.match(js, /需要你确认/);
+  assert.match(js, /renderCorrectionCard/);
+  assert.match(js, /calculation_error/);
+  assert.match(js, /correctionDecisions/);
+  assert.match(js, /plainAuditIssues/);
   assert.doesNotMatch(js, /function renderFileReview[\s\S]*?\$\('file-errors'\)\.textContent = summarizeFileIssues\(result\)/);
 
   assert.match(css, /review-summary/);
