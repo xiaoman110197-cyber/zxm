@@ -18,6 +18,34 @@ test('recomputes gross margin and gives only the provable corrected value', () =
   assert.match(issue.explanation, /9800.*6100.*37\.76/);
 });
 
+test('normalizes different currency units before recomputing gross margin', () => {
+  const issues = inspectReportFacts([
+    fact('r','华南大区','营收',1,'亿元'),
+    fact('c','华南大区','营业成本',5000,'万元'),
+    fact('m','华南大区','毛利率',85,'%')
+  ]);
+  const issue = issues.find((x) => x.title === '毛利率计算错误');
+  assert.equal(issue.kind, 'calculation_error');
+  assert.equal(issue.correctedValue, 50);
+});
+
+test('does not falsely flag a correct gross profit when amount units differ', () => {
+  const issues = inspectReportFacts([
+    fact('r','华南大区','营收',1,'亿元'),
+    fact('c','华南大区','营业成本',5000,'万元'),
+    fact('g','华南大区','毛利',5000,'万元')
+  ]);
+  assert.equal(issues.some((x) => x.title === '毛利计算错误'), false);
+});
+
+test('does not compare financial amounts when one unit is ambiguous', () => {
+  const issues = inspectReportFacts([
+    fact('r','跨境电商部','营收',1,'亿元'),
+    fact('p','跨境电商部','净利润',9000,'')
+  ]);
+  assert.equal(issues.some((x) => x.title.includes('净利润')), false);
+});
+
 test('negative operating cost is an anomaly to verify, not an invented correction', () => {
   const [issue] = inspectReportFacts([fact('c','华北大区','营业成本',-1200,'万元')]);
   assert.equal(issue.kind, 'anomaly');
@@ -33,6 +61,14 @@ test('net profit above revenue is flagged as anomaly without inventing a correct
   const issue = issues.find((x) => x.title.includes('净利润'));
   assert.equal(issue.kind, 'anomaly');
   assert.equal('correctedValue' in issue, false);
+});
+
+test('does not falsely flag net profit above revenue when currency units differ', () => {
+  const issues = inspectReportFacts([
+    fact('r','跨境电商部','营收',1,'亿元'),
+    fact('p','跨境电商部','净利润',9000,'万元')
+  ]);
+  assert.equal(issues.some((x) => x.title.includes('净利润')), false);
 });
 
 test('attendance rate above 100 percent is a logic error', () => {
@@ -80,4 +116,15 @@ test('recomputes a summary gross margin from row revenue and cost instead of add
   const issue = issues.find((x) => x.title === '总毛利率计算错误');
   assert.equal(issue.kind, 'calculation_error');
   assert.equal(issue.correctedValue, 37.64);
+});
+
+test('recomputes summary gross margin across mixed currency units', () => {
+  const issues = inspectReportFacts([
+    fact('r1','华南大区','营收',1,'亿元'), fact('c1','华南大区','营业成本',5000,'万元'),
+    fact('r2','华北大区','营收',8000,'万元'), fact('c2','华北大区','营业成本',4000,'万元'),
+    fact('sum','财务汇总行','总毛利率',182.5,'%')
+  ]);
+  const issue = issues.find((x) => x.title === '总毛利率计算错误');
+  assert.equal(issue.kind, 'calculation_error');
+  assert.equal(issue.correctedValue, 50);
 });
