@@ -1,5 +1,7 @@
 const REVENUE_METRICS = ['营收','营业收入','营业额','销售额'];
+const TOTAL_REVENUE_METRICS = ['总营收','总营业收入','总营业额','总销售额'];
 const COST_METRICS = ['营业成本','成本'];
+const TOTAL_COST_METRICS = ['总营业成本','总成本'];
 const GROSS_PROFIT_METRICS = ['毛利'];
 const GROSS_MARGIN_METRICS = ['毛利率','销售毛利率'];
 const NET_PROFIT_METRICS = ['净利润'];
@@ -8,6 +10,16 @@ const ATTENDANCE_METRICS = ['出勤率'];
 const TURNOVER_METRICS = ['离职率'];
 const PRODUCTION_DATE_METRICS = ['生产日期'];
 const EXPIRY_DATE_METRICS = ['失效日期','到期日期','有效期至'];
+
+const CURRENCY_SCALES = new Map([
+  ['元', 1],
+  ['人民币元', 1],
+  ['千元', 1_000],
+  ['万元', 10_000],
+  ['万', 10_000],
+  ['亿元', 100_000_000],
+  ['亿', 100_000_000]
+]);
 
 function round(value, digits = 2) {
   const factor = 10 ** digits;
@@ -35,6 +47,33 @@ function materialDifference(actual, expected, tolerance = 0.05) {
   return Math.abs(actual - expected) > Math.max(tolerance, Math.abs(expected) * 0.001);
 }
 
+function cleanUnit(value) {
+  return String(value || '').replace(/\s+/g, '').trim();
+}
+
+function amountDescriptor(fact) {
+  const value = numeric(fact);
+  if (value === null) return null;
+  const unit = cleanUnit(fact?.unit);
+  if (!unit) return { value, base:value, scale:1, family:'unitless', unit:'' };
+  const scale = CURRENCY_SCALES.get(unit);
+  if (scale) return { value, base:value * scale, scale, family:'currency', unit };
+  return { value, base:value, scale:1, family:`literal:${unit}`, unit };
+}
+
+function comparableAmounts(...facts) {
+  const descriptors = facts.map(amountDescriptor);
+  if (descriptors.some((item) => !item)) return null;
+  const families = new Set(descriptors.map((item) => item.family));
+  if (families.size === 1) return descriptors;
+  if ([...families].every((family) => family === 'currency')) return descriptors;
+  return null;
+}
+
+function convertBaseToDescriptor(baseValue, descriptor) {
+  return round(baseValue / descriptor.scale, 2);
+}
+
 function parseDate(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
   if (typeof value !== 'string') return null;
@@ -58,21 +97,22 @@ function grossProfitIssues(scope, facts) {
   const revenue = findFact(facts, REVENUE_METRICS);
   const cost = findFact(facts, COST_METRICS);
   const reported = findFact(facts, GROSS_PROFIT_METRICS);
-  const revenueValue = numeric(revenue);
-  const costValue = numeric(cost);
-  const reportedValue = numeric(reported);
-  if (revenueValue === null || costValue === null || reportedValue === null || costValue < 0) return [];
-  const expected = round(revenueValue - costValue, 2);
-  if (!materialDifference(reportedValue, expected, 0.01)) return [];
+  const descriptors = comparableAmounts(revenue, cost, reported);
+  if (!descriptors) return [];
+  const [revenueAmount, costAmount, reportedAmount] = descriptors;
+  if (revenueAmount.base < 0 || costAmount.base < 0) return [];
+  const expectedBase = revenueAmount.base - costAmount.base;
+  if (!materialDifference(reportedAmount.base, expectedBase, Math.max(0.01, Math.abs(expectedBase) * 0.0001))) return [];
+  const expected = convertBaseToDescriptor(expectedBase, reportedAmount);
   return [{
     id:issueId('gross-profit', scope, [revenue.id,cost.id,reported.id]),
     kind:'calculation_error',
     title:'毛利计算错误',
     scope,
-    originalValue:reportedValue,
+    originalValue:reportedAmount.value,
     correctedValue:expected,
-    unit:reported.unit || revenue.unit || cost.unit || '',
-    explanation:`按${revenue.metric} ${revenueValue}${revenue.unit || ''} 减去${cost.metric} ${costValue}${cost.unit || ''}，毛利应为 ${expected}${reported.unit || revenue.unit || ''}。`,
+    unit:reportedAmount.unit,
+    explanation:`按${revenue.metric} ${revenue.value}${revenue.unit || ''} 减去${cost.metric} ${cost.value}${cost.unit || ''}，换算到同一金额单位后，毛利应为 ${expected}${reportedAmount.unit || ''}。`,
     evidence:evidenceFor([revenue,cost,reported]),
     relatedFactIds:[revenue.id,cost.id,reported.id],
     severity:'high'
@@ -83,11 +123,12 @@ function grossMarginIssues(scope, facts) {
   const revenue = findFact(facts, REVENUE_METRICS);
   const cost = findFact(facts, COST_METRICS);
   const reported = findFact(facts, GROSS_MARGIN_METRICS);
-  const revenueValue = numeric(revenue);
-  const costValue = numeric(cost);
+  const amounts = comparableAmounts(revenue, cost);
   const reportedValue = numeric(reported);
-  if (revenueValue === null || costValue === null || reportedValue === null || revenueValue <= 0 || costValue < 0) return [];
-  const expected = round((revenueValue - costValue) / revenueValue * 100, 2);
+  if (!amounts || reportedValue === null) return [];
+  const [revenueAmount, costAmount] = amounts;
+  if (revenueAmount.base <= 0 || costAmount.base < 0) return [];
+  const expected = round((revenueAmount.base - costAmount.base) / revenueAmount.base * 100, 2);
   if (!materialDifference(reportedValue, expected, 0.05)) return [];
   return [{
     id:issueId('gross-margin', scope, [revenue.id,cost.id,reported.id]),
@@ -97,7 +138,7 @@ function grossMarginIssues(scope, facts) {
     originalValue:reportedValue,
     correctedValue:expected,
     unit:'%',
-    explanation:`按${revenue.metric} ${revenueValue}${revenue.unit || ''}、${cost.metric} ${costValue}${cost.unit || ''}重新计算，(${revenueValue} - ${costValue}) ÷ ${revenueValue} = ${expected}%。`,
+    explanation:`按${revenue.metric} ${revenue.value}${revenue.unit || ''}、${cost.metric} ${cost.value}${cost.unit || ''}换算到同一金额单位后重新计算，毛利率应为 ${expected}%。`,
     evidence:evidenceFor([revenue,cost,reported]),
     relatedFactIds:[revenue.id,cost.id,reported.id],
     severity:'high'
@@ -125,15 +166,16 @@ function negativeCostIssues(scope, facts) {
 function netProfitIssues(scope, facts) {
   const revenue = findFact(facts, REVENUE_METRICS);
   const profit = findFact(facts, NET_PROFIT_METRICS);
-  const revenueValue = numeric(revenue);
-  const profitValue = numeric(profit);
-  if (revenueValue === null || profitValue === null || revenueValue < 0 || profitValue <= revenueValue) return [];
+  const amounts = comparableAmounts(revenue, profit);
+  if (!amounts) return [];
+  const [revenueAmount, profitAmount] = amounts;
+  if (revenueAmount.base < 0 || profitAmount.base <= revenueAmount.base) return [];
   return [{
     id:issueId('profit-over-revenue', scope, [revenue.id,profit.id]),
     kind:'anomaly',
     title:'净利润高于营业收入',
     scope,
-    originalValue:profitValue,
+    originalValue:profit.value,
     unit:profit.unit || revenue.unit || '',
     explanation:'净利润高于营业收入需要核对。它可能来自营业外收益、投资收益或统计口径差异，因此这里只标记异常，不猜测正确净利润。',
     evidence:evidenceFor([revenue,profit]),
@@ -252,37 +294,67 @@ function summaryGrossMarginIssues(facts) {
   const reported = numeric(summary);
   if (!summary || reported === null) return [];
 
-  const groups = groupByScope((facts || []).filter((fact) => fact.scope !== summary.scope && !isSummaryScope(fact.scope)));
-  let revenueTotal = 0;
-  let costTotal = 0;
-  const related = [];
-  for (const scopedFacts of groups.values()) {
-    const revenue = findFact(scopedFacts, REVENUE_METRICS);
-    const cost = findFact(scopedFacts, COST_METRICS);
-    const revenueValue = numeric(revenue);
-    const costValue = numeric(cost);
-    if (revenueValue === null || costValue === null || revenueValue < 0 || costValue < 0) continue;
-    if ((revenue.unit || '') !== (cost.unit || '')) continue;
-    revenueTotal += revenueValue;
-    costTotal += costValue;
-    related.push(revenue, cost);
+  const summaryFacts = (facts || []).filter((fact) => fact.scope === summary.scope);
+  const totalRevenue = findFact(summaryFacts, [...TOTAL_REVENUE_METRICS, ...REVENUE_METRICS]);
+  const totalCost = findFact(summaryFacts, [...TOTAL_COST_METRICS, ...COST_METRICS]);
+  const totalAmounts = comparableAmounts(totalRevenue, totalCost);
+  if (totalAmounts) {
+    const [revenueAmount, costAmount] = totalAmounts;
+    if (revenueAmount.base > 0 && costAmount.base >= 0) {
+      const expected = round((revenueAmount.base - costAmount.base) / revenueAmount.base * 100, 2);
+      if (materialDifference(reported, expected, 0.05)) {
+        return [{
+          id:issueId('summary-gross-margin', summary.scope, [totalRevenue.id,totalCost.id,summary.id]),
+          kind:'calculation_error',
+          title:'总毛利率计算错误',
+          scope:summary.scope,
+          originalValue:reported,
+          correctedValue:expected,
+          unit:'%',
+          explanation:`报表同时给出了${totalRevenue.metric} ${totalRevenue.value}${totalRevenue.unit || ''} 和${totalCost.metric} ${totalCost.value}${totalCost.unit || ''}，换算到同一金额单位后可直接复算，总毛利率应为 ${expected}%。`,
+          evidence:evidenceFor([totalRevenue,totalCost,summary]),
+          relatedFactIds:[totalRevenue.id,totalCost.id,summary.id],
+          severity:'high'
+        }];
+      }
+      return [];
+    }
   }
-  if (!related.length || revenueTotal <= 0) return [];
-  const expected = round((revenueTotal - costTotal) / revenueTotal * 100, 2);
-  if (!materialDifference(reported, expected, 0.05)) return [];
-  return [{
-    id:issueId('summary-gross-margin', summary.scope, [...related.map((fact) => fact.id), summary.id]),
-    kind:'calculation_error',
-    title:'总毛利率计算错误',
-    scope:summary.scope,
-    originalValue:reported,
-    correctedValue:expected,
-    unit:'%',
-    explanation:`总毛利率不能直接累加各部门百分比。按可读取明细的总营收 ${revenueTotal} 与总成本 ${costTotal} 加权重算，应为 ${expected}%。`,
-    evidence:[...evidenceFor(related), `${summary.metric}原值：${reported}%`],
-    relatedFactIds:[...related.map((fact) => fact.id), summary.id],
-    severity:'high'
-  }];
+
+  const detailMargins = (facts || []).filter((fact) => !isSummaryScope(fact.scope) && GROSS_MARGIN_METRICS.includes(fact.metric) && numeric(fact) !== null);
+  if (detailMargins.length >= 2) {
+    const directSum = round(detailMargins.reduce((sum, fact) => sum + numeric(fact), 0), 2);
+    if (!materialDifference(reported, directSum, 0.05)) {
+      return [{
+        id:issueId('summary-margin-direct-sum', summary.scope, [...detailMargins.map((fact) => fact.id), summary.id]),
+        kind:'logic_error',
+        title:'总毛利率计算方式错误',
+        scope:summary.scope,
+        originalValue:reported,
+        unit:'%',
+        explanation:`总毛利率 ${reported}% 与可见部门毛利率 ${detailMargins.map((fact) => `${fact.value}%`).join(' + ')} 的直接相加结果 ${directSum}% 一致。毛利率属于比例，不能直接相加；应使用完整汇总营收和汇总成本加权计算。当前缺少可证明完整性的汇总金额，因此不编造正确总毛利率。`,
+        evidence:[...evidenceFor(detailMargins), `${summary.metric}：${reported}%`],
+        relatedFactIds:[...detailMargins.map((fact) => fact.id), summary.id],
+        severity:'high'
+      }];
+    }
+  }
+
+  if (reported < 0 || reported > 100) {
+    return [{
+      id:issueId('summary-margin-anomaly', summary.scope, [summary.id]),
+      kind:'anomaly',
+      title:'总毛利率异常',
+      scope:summary.scope,
+      originalValue:reported,
+      unit:'%',
+      explanation:`总毛利率填写为 ${reported}%，明显需要核对。当前没有可验证的完整汇总营收和汇总成本，因此无法证明正确总毛利率，也不会根据部分明细猜一个答案。`,
+      evidence:evidenceFor([summary]),
+      relatedFactIds:[summary.id],
+      severity:'high'
+    }];
+  }
+  return [];
 }
 
 export function inspectReportFacts(facts, { now = new Date() } = {}) {
