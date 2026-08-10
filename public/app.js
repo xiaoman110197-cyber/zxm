@@ -1,7 +1,18 @@
 const $ = (id) => document.getElementById(id);
 const PRIORITIES = ['P0', 'P1', 'P2'];
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
-const state = { diagnosis: { id: crypto.randomUUID(), answers: {}, evidence: [], findings: [], documents: [] }, turn: 0, originalFile: null, originalBase64: '', audit: null };
+const state = {
+  diagnosis: { id: crypto.randomUUID(), answers: {}, evidence: [], findings: [], documents: [] },
+  turn: 0,
+  originalFile: null,
+  originalBase64: '',
+  audit: null,
+  pendingFile: null,
+  fileAnalysisController: null,
+  fileElapsedTimer: null,
+  fileAnalysisStartedAt: 0,
+  fileProgressPercent: 0
+};
 
 function addBubble(text, who) {
   const node = document.createElement('div');
@@ -72,11 +83,22 @@ async function sendDiagnosis() {
   }
 }
 
-function fileToBase64(file) {
+function fileToBase64(file, { signal, onProgress } = {}) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    const abortReader = () => reader.readyState === FileReader.LOADING && reader.abort();
+    signal?.addEventListener('abort', abortReader, { once:true });
     reader.onerror = () => reject(new Error('无法读取文件'));
+    reader.onabort = () => {
+      const error = new Error('已取消分析');
+      error.name = 'AbortError';
+      reject(error);
+    };
+    reader.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) onProgress?.(event.loaded / event.total);
+    };
     reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onloadend = () => signal?.removeEventListener('abort', abortReader);
     reader.readAsDataURL(file);
   });
 }
@@ -124,41 +146,190 @@ function resetUploadedFileState() {
   state.originalBase64 = '';
   state.audit = null;
   state.diagnosis.documents = [];
+  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && item.startsWith('file_analysis:')));
+  updateDownloadState();
+}
+
+function stopFileElapsedTimer() {
+  if (state.fileElapsedTimer) clearInterval(state.fileElapsedTimer);
+  state.fileElapsedTimer = null;
+}
+
+function renderFileElapsed() {
+  if (!state.fileAnalysisStartedAt) return;
+  const seconds = Math.max(0, Math.floor((Date.now() - state.fileAnalysisStartedAt) / 1000));
+  $('file-progress-elapsed').textContent = `已用时 ${seconds} 秒`;
+}
+
+function startFileElapsedTimer() {
+  stopFileElapsedTimer();
+  state.fileAnalysisStartedAt = Date.now();
+  renderFileElapsed();
+  state.fileElapsedTimer = setInterval(renderFileElapsed, 1000);
+}
+
+function setFileProgress(percent, message, { reset = false } = {}) {
+  const progress = $('file-progress');
+  progress.hidden = false;
+  if (reset) state.fileProgressPercent = 0;
+  const numeric = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  state.fileProgressPercent = reset ? numeric : Math.max(state.fileProgressPercent, numeric);
+  progress.setAttribute('aria-valuenow', String(state.fileProgressPercent));
+  $('file-progress-percent').textContent = `${state.fileProgressPercent}%`;
+  $('file-progress-message').textContent = message || '正在分析经营资料';
+  $('file-progress-bar').style.width = `${state.fileProgressPercent}%`;
+}
+
+function setFileProgressActions({ analyzing = false, retry = false } = {}) {
+  $('cancel-file').hidden = !analyzing;
+  $('retry-file').hidden = !retry;
+}
+
+function parseSseBlock(block) {
+  const lines = block.split(/\r?\n/);
+  let event = 'message';
+  const dataLines = [];
+  for (const line of lines) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
+  }
+  if (!dataLines.length) return null;
+  const raw = dataLines.join('\n');
+  return { event, data: JSON.parse(raw) };
+}
+
+function handleAnalysisStreamEvent(parsed, onProgress) {
+  if (!parsed) return null;
+  if (parsed.event === 'progress') {
+    onProgress(parsed.data);
+    return null;
+  }
+  if (parsed.event === 'result') return parsed.data;
+  if (parsed.event === 'error') {
+    const error = new Error(parsed.data?.error || '文件分析失败');
+    if (parsed.data?.requestId) error.requestId = parsed.data.requestId;
+    throw error;
+  }
+  return null;
+}
+
+async function readAnalysisStream(response, onProgress) {
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `文件分析请求失败 (${response.status})`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('text/event-stream')) {
+    return response.json();
+  }
+
+  let finalResult = null;
+  const processBlock = (block) => {
+    if (!block.trim()) return;
+    const value = handleAnalysisStreamEvent(parseSseBlock(block), onProgress);
+    if (value) finalResult = value;
+  };
+
+  if (!response.body) {
+    const text = await response.text();
+    for (const block of text.split(/\r?\n\r?\n/)) processBlock(block);
+    if (finalResult) return finalResult;
+    throw new Error('分析连接提前结束，请重新分析');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    pending += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const blocks = pending.split(/\r?\n\r?\n/);
+    pending = blocks.pop() || '';
+    for (const block of blocks) processBlock(block);
+    if (done) break;
+  }
+  if (pending.trim()) processBlock(pending);
+  if (finalResult) return finalResult;
+  throw new Error('分析连接提前结束，请重新分析');
+}
+
+async function postFileAnalysisStream(file, contentBase64, { signal, onProgress }) {
+  const response = await fetch('/api/analyze-file?stream=1', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
+    body:JSON.stringify({ file:{ name:file.name, contentBase64 } }),
+    signal
+  });
+  return readAnalysisStream(response, onProgress);
+}
+
+function applySuccessfulFileAnalysis(file, contentBase64, result) {
+  if (result.document.type === 'excel') {
+    state.originalFile = file;
+    state.originalBase64 = contentBase64;
+  } else {
+    state.originalFile = null;
+    state.originalBase64 = '';
+  }
+
+  state.audit = result.audit;
+  state.diagnosis.documents = [result.document];
+  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && item.startsWith('file_analysis:')));
+  state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`);
+  $('file-status').textContent = fileStatusText(result);
+  $('file-errors').textContent = summarizeFileIssues(result);
   updateDownloadState();
 }
 
 async function analyzeBusinessFile(file) {
+  const previousDocument = state.diagnosis.documents[0] || null;
+  state.pendingFile = file;
   $('file-errors').textContent = '';
+
   if (file.size > MAX_FILE_BYTES) {
-    resetUploadedFileState();
-    $('file-status').textContent = '';
-    $('file-errors').textContent = '文件过大：当前版本单个文件最大支持 3 MB。';
+    state.pendingFile = null;
+    $('file-progress').hidden = true;
+    $('file-errors').textContent = `文件过大：当前版本单个文件最大支持 3 MB。${previousDocument ? ' 此前成功分析的资料仍保留。' : ''}`;
     return;
   }
 
-  $('file-status').textContent = `正在分析 ${file.name}…`;
+  const controller = new AbortController();
+  state.fileAnalysisController = controller;
+  $('workbook').disabled = true;
+  $('file-status').textContent = previousDocument ? '正在分析新资料；此前成功分析的资料会保留到新结果确认后再替换。' : '';
+  setFileProgress(2, '正在读取文件', { reset:true });
+  setFileProgressActions({ analyzing:true, retry:false });
+  startFileElapsedTimer();
+
   try {
-    const contentBase64 = await fileToBase64(file);
-    const result = await postJson('/api/analyze-file', { file: { name: file.name, contentBase64 } });
+    const contentBase64 = await fileToBase64(file, {
+      signal:controller.signal,
+      onProgress:(fraction) => setFileProgress(2 + fraction * 6, '正在读取文件')
+    });
+    setFileProgress(8, '文件已读取，正在发送到分析服务');
 
-    if (result.document.type === 'excel') {
-      state.originalFile = file;
-      state.originalBase64 = contentBase64;
-    } else {
-      state.originalFile = null;
-      state.originalBase64 = '';
-    }
+    const result = await postFileAnalysisStream(file, contentBase64, {
+      signal:controller.signal,
+      onProgress:(event) => setFileProgress(event?.percent, event?.message)
+    });
 
-    state.audit = result.audit;
-    state.diagnosis.documents = [result.document];
-    state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`);
-    $('file-status').textContent = fileStatusText(result);
-    $('file-errors').textContent = summarizeFileIssues(result);
-    updateDownloadState();
+    applySuccessfulFileAnalysis(file, contentBase64, result);
+    state.pendingFile = null;
+    setFileProgress(100, '分析完成');
+    setFileProgressActions({ analyzing:false, retry:false });
   } catch (error) {
-    resetUploadedFileState();
-    $('file-status').textContent = '';
-    $('file-errors').textContent = `文件分析失败：${error.message}`;
+    const cancelled = error?.name === 'AbortError';
+    const baseMessage = cancelled ? '已取消分析。' : `文件分析失败：${error.message}`;
+    const keepMessage = previousDocument ? ' 此前成功分析的资料仍保留。' : '';
+    $('file-errors').textContent = `${baseMessage}${keepMessage}`;
+    $('file-progress-message').textContent = cancelled ? '分析已取消，可重新分析' : '分析已中断，可重新分析';
+    setFileProgressActions({ analyzing:false, retry:Boolean(state.pendingFile) });
+  } finally {
+    stopFileElapsedTimer();
+    renderFileElapsed();
+    $('workbook').disabled = false;
+    if (state.fileAnalysisController === controller) state.fileAnalysisController = null;
   }
 }
 
@@ -202,5 +373,9 @@ $('owner-input').addEventListener('keydown', (event) => {
 $('workbook').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
   if (file) analyzeBusinessFile(file);
+});
+$('cancel-file').addEventListener('click', () => state.fileAnalysisController?.abort());
+$('retry-file').addEventListener('click', () => {
+  if (state.pendingFile && !state.fileAnalysisController) analyzeBusinessFile(state.pendingFile);
 });
 $('download-excel').addEventListener('click', downloadReport);
