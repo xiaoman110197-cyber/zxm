@@ -51,6 +51,25 @@ test('parses image OCR with explicit confidence', async () => {
   assert.match(result.document.text, /营业额/);
 });
 
+test('image parser forwards OCR progress into the shared progress callback', async () => {
+  const buffer = Buffer.from([0xff,0xd8,0xff,0xe0,1,2,3,4]);
+  const events = [];
+  const result = await parseBusinessDocument({ name:'后台.jpg', buffer }, {
+    ...deps,
+    onProgress: (event) => events.push(event),
+    imageOcr: async (_buffer, reportOcrProgress) => {
+      assert.equal(typeof reportOcrProgress, 'function');
+      reportOcrProgress({ status:'loading language traineddata', progress:0.5 });
+      reportOcrProgress({ status:'recognizing text', progress:0.6 });
+      return { text:'今日营业额 88 元', confidence:0.82 };
+    }
+  });
+  assert.equal(result.document.type, 'image');
+  assert.ok(events.length >= 2);
+  assert.ok(events.every((event) => typeof event.percent === 'number' && event.percent >= 0 && event.percent <= 100));
+  assert.ok(events.some((event) => event.phase === 'ocr' && event.percent > 30 && event.percent < 90));
+});
+
 test('marks low-confidence image OCR as uncertain instead of reliable fact', async () => {
   const buffer = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1]);
   const result = await parseBusinessDocument({ name:'模糊截图.png', buffer }, { ...deps, imageOcr: async () => ({ text:'营业额 800?', confidence:0.41 }) });
