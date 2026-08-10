@@ -15,10 +15,18 @@
     </header>
 
     <section class="card" id="conversation-card">
+      <div class="section-head conversation-head">
+        <div><span class="eyebrow">经营问诊</span><h2>说清问题，逐步找证据</h2></div>
+        <button id="new-diagnosis" type="button" class="small-button quiet-button">开始新问诊</button>
+      </div>
+      <p id="session-status" class="muted small" aria-live="polite">文字问诊会在本机保存 7 天；上传的原文件和识别全文不会写入本地草稿。</p>
       <div id="conversation" class="conversation" aria-live="polite"></div>
       <label for="owner-input">经营情况 / 经营问题</label>
       <textarea id="owner-input" rows="5" placeholder="例如：最近两个月营业额下降，但客流看起来没少，我不知道问题出在哪里。"></textarea>
-      <div class="actions"><button id="send" class="primary">开始诊断</button></div>
+      <div class="actions diagnosis-actions">
+        <button id="retry-diagnosis" type="button" hidden>重试本轮</button>
+        <button id="send" class="primary">开始诊断</button>
+      </div>
       <p id="request-error" class="error" role="alert"></p>
     </section>
 
