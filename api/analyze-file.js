@@ -62,6 +62,43 @@ function attachAuditSummary(document, audit) {
   };
 }
 
+function buildPayload(parsed) {
+  const audit = parsed.workbook ? normalizeAudit(auditWorkbook(parsed.workbook)) : emptyAudit();
+  const document = attachAuditSummary(parsed.document, audit);
+  const warnings = Array.isArray(document.warnings) ? document.warnings : [];
+  return {
+    document,
+    audit,
+    summary: {
+      fileType: document.type,
+      sheetCount: parsed.workbook?.sheets?.length || 0,
+      rowCount: countRows(parsed.workbook),
+      textLength: typeof document.text === 'string' ? document.text.length : 0,
+      warningCount: warnings.length,
+      errorCount: audit.errors.length,
+      anomalyCount: audit.anomalies.length,
+      confidence: typeof document.confidence === 'number' ? document.confidence : null,
+      metrics: audit.metrics
+    }
+  };
+}
+
+function isStreamRequest(req) {
+  return String(req.query?.stream ?? '') === '1';
+}
+
+function startEventStream(res) {
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+}
+
+function writeSse(res, event, data) {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   if (req.method && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const file = req.body?.file;
@@ -83,30 +120,39 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
     return res.status(413).json({ error: '文件过大：当前版本单个文件最大支持 3 MB' });
   }
 
+  const streamMode = isStreamRequest(req);
+  if (streamMode) {
+    startEventStream(res);
+    writeSse(res, 'progress', { phase:'preparing', percent:10, message:'文件已接收，准备分析' });
+  }
+
   try {
     const parser = deps.parseBusinessDocument || parseBusinessDocument;
-    const parsed = await parser({ name:file.name, buffer }, deps);
-    const audit = parsed.workbook ? normalizeAudit(auditWorkbook(parsed.workbook)) : emptyAudit();
-    const document = attachAuditSummary(parsed.document, audit);
-    const warnings = Array.isArray(document.warnings) ? document.warnings : [];
-    return res.status(200).json({
-      document,
-      audit,
-      summary: {
-        fileType: document.type,
-        sheetCount: parsed.workbook?.sheets?.length || 0,
-        rowCount: countRows(parsed.workbook),
-        textLength: typeof document.text === 'string' ? document.text.length : 0,
-        warningCount: warnings.length,
-        errorCount: audit.errors.length,
-        anomalyCount: audit.anomalies.length,
-        confidence: typeof document.confidence === 'number' ? document.confidence : null,
-        metrics: audit.metrics
-      }
-    });
+    const parserDeps = {
+      ...deps,
+      onProgress: streamMode
+        ? (event) => writeSse(res, 'progress', event)
+        : deps.onProgress
+    };
+    const parsed = await parser({ name:file.name, buffer }, parserDeps);
+    if (streamMode) writeSse(res, 'progress', { phase:'audit', percent:90, message:'正在检查数据质量并整理结果' });
+    const payload = buildPayload(parsed);
+
+    if (streamMode) {
+      writeSse(res, 'progress', { phase:'complete', percent:100, message:'分析完成' });
+      writeSse(res, 'result', payload);
+      res.end();
+      return;
+    }
+    return res.status(200).json(payload);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error('[analyze-file]', file.name, detail);
+    if (streamMode) {
+      writeSse(res, 'error', { error:'文件损坏、格式不匹配或内容无法解析' });
+      res.end();
+      return;
+    }
     return res.status(422).json({ error: '文件损坏、格式不匹配或内容无法解析', detail });
   }
 }
