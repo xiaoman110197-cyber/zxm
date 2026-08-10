@@ -1,20 +1,32 @@
 import { analyzeUploadedBusinessFile, FileAnalysisError } from '../src/documents/analyze.js';
+import { clientIp, createBurstLimiter } from '../src/http/guards.js';
+
+const streamedFileLimiter = createBurstLimiter({ limit:20, windowMs:60_000 });
 
 function writeEvent(res, event) {
   res.write(`${JSON.stringify(event)}\n`);
 }
 
+function checkRateLimit(req, res, limiter) {
+  const check = limiter.check(clientIp(req));
+  if (check.allowed) return false;
+  res.status(429);
+  if (typeof res.setHeader === 'function') res.setHeader('Retry-After', String(check.retryAfterSeconds));
+  writeEvent(res, { type:'error', status:429, error:'文件分析请求过于频繁，请稍后再试' });
+  res.end();
+  return true;
+}
+
 export async function handleAnalyzeFileStreamRequest(req, res, deps = {}) {
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+
   if (req.method && req.method !== 'POST') {
     res.status(405);
-    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
     writeEvent(res, { type:'error', status:405, error:'Method not allowed' });
     return res.end();
   }
-
-  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-store');
+  if (checkRateLimit(req, res, deps.rateLimiter || streamedFileLimiter)) return res;
 
   const analyze = deps.analyzeUploadedBusinessFile || analyzeUploadedBusinessFile;
   try {
