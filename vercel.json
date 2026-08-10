@@ -3,7 +3,10 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
-    "api/analyze-file.js": { "maxDuration": 180 },
+    "api/analyze-file.js": {
+      "maxDuration": 180,
+      "includeFiles": "{node_modules/tesseract.js/src/worker-script/node/**,node_modules/tesseract.js-core/**,node_modules/@tesseract.js-data/chi_sim/**}"
+    },
     "api/diagnosis.js": { "maxDuration": 45 }
   },
   "headers": [
