@@ -27,7 +27,6 @@ test('screenshot-style report returns concrete issues without fabricated correct
     fact('sku3-p','SKU-8803','生产日期','2025-10-10'),
     fact('sku3-e','SKU-8803','失效日期','2024-10-10'),
 
-    fact('m1','华南分部','毛利率',85,'%'),
     fact('m2','华北分部','毛利率',97.5,'%'),
     fact('sum-m','财务汇总行','总毛利率',182.5,'%')
   ];
