@@ -22,6 +22,30 @@ test('diagnosis api reports missing server api key', async () => {
   assert.match(res.body.error, /OPENAI_API_KEY/);
 });
 
+test('diagnosis api rejects oversized context before calling a model', async () => {
+  let called = false;
+  const diagnosis = { id:'large', answers:{ owner_turn_1:'很长'.repeat(40000) }, evidence:[], findings:[], documents:[] };
+  const res = mockRes();
+  await handleDiagnosisRequest({ method:'POST', body:{ diagnosis } }, res, {
+    primaryProvider:{ name:'primary', diagnose:async () => { called = true; return {}; } }
+  });
+  assert.equal(res.statusCode, 413);
+  assert.equal(called, false);
+  assert.match(res.body.error, /过长|过大|精简/);
+});
+
+test('diagnosis api rejects pathological collection counts before calling a model', async () => {
+  let called = false;
+  const answers = Object.fromEntries(Array.from({ length:41 }, (_, i) => [`q${i}`, 'a']));
+  const diagnosis = { id:'many', answers, evidence:[], findings:[], documents:[] };
+  const res = mockRes();
+  await handleDiagnosisRequest({ method:'POST', body:{ diagnosis } }, res, {
+    primaryProvider:{ name:'primary', diagnose:async () => { called = true; return {}; } }
+  });
+  assert.equal(res.statusCode, 413);
+  assert.equal(called, false);
+});
+
 test('AI findings must satisfy evidence schema', () => {
   assert.throws(() => validateAiFinding({ status: 'confirmed', priority: 'P0' }), /evidence/i);
   assert.doesNotThrow(() => validateAiFinding({
