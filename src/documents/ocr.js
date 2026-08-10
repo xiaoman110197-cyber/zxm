@@ -5,6 +5,7 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const DEFAULT_TESSDATA_DIR = process.env.TESSERACT_CACHE_PATH || '/tmp/zhenduan-tessdata';
 const DEFAULT_WORKER_INIT_TIMEOUT_MS = 20_000;
+const DEFAULT_NODE_WORKER_PATH = require.resolve('tesseract.js/src/worker-script/node/index.js');
 let bundledTessdataPromise = null;
 
 function bundledLanguageSource() {
@@ -66,7 +67,8 @@ async function createWorkerWithTimeout(createWorker, options, timeoutMs) {
 export function createBundledImageOcr({
   createWorker: injectedCreateWorker,
   prepareTessdata = prepareBundledTessdata,
-  workerInitTimeoutMs = DEFAULT_WORKER_INIT_TIMEOUT_MS
+  workerInitTimeoutMs = DEFAULT_WORKER_INIT_TIMEOUT_MS,
+  workerPath = DEFAULT_NODE_WORKER_PATH
 } = {}) {
   async function loadCreateWorker() {
     if (injectedCreateWorker) return injectedCreateWorker;
@@ -82,6 +84,7 @@ export function createBundledImageOcr({
     let worker;
     try {
       worker = await createWorkerWithTimeout(createWorker, {
+        workerPath,
         langPath:tessdataDir,
         cachePath:tessdataDir,
         gzip:true,
