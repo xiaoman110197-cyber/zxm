@@ -21,11 +21,14 @@ test('image OCR requires merchant confirmation before the document enters diagno
   assert.match(js, /识别结果可能存在误差/);
   assert.match(js, /请先确认识别内容/);
 
-  const imageReviewIndex = js.indexOf("result.document?.type === 'image'");
-  const diagnosisCommitIndex = js.indexOf('state.diagnosis.documents = [result.document]');
-  assert.ok(imageReviewIndex >= 0, 'image review gate should exist');
-  assert.ok(diagnosisCommitIndex >= 0, 'confirmed document commit should still exist');
-  assert.ok(imageReviewIndex < diagnosisCommitIndex, 'image review gate should be evaluated before diagnosis commit');
+  assert.match(
+    js,
+    /function applySuccessfulFileAnalysis[\s\S]*?if \(result\.document\?\.type === 'image'\) \{[\s\S]*?renderFileReview\(file, contentBase64, result\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?commitSuccessfulFileAnalysis\(file, contentBase64, result\);/
+  );
+  assert.match(
+    js,
+    /function commitSuccessfulFileAnalysis[\s\S]*?state\.diagnosis\.documents = \[result\.document\]/
+  );
 
   assert.match(css, /file-review/);
   assert.match(css, /file-review-text/);
