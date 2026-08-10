@@ -3,6 +3,8 @@ import { SESSION_KEY, createSessionSnapshot, restoreSessionSnapshot } from './se
 const $ = (id) => document.getElementById(id);
 const PRIORITIES = ['P0', 'P1', 'P2'];
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
+const MAX_OCR_IMAGE_DIMENSION = 2000;
+const MAX_SOURCE_IMAGE_BYTES = 12 * 1024 * 1024;
 
 function newDiagnosis() {
   return { id:crypto.randomUUID(), answers:{}, evidence:[], findings:[], documents:[], dialogue:[] };
@@ -21,7 +23,9 @@ const state = {
   fileAnalysisController: null,
   fileElapsedTimer: null,
   fileAnalysisStartedAt: 0,
-  fileProgressPercent: 0
+  fileProgressPercent: 0,
+  fileResumeAfterBackground: false,
+  fileBackgroundRetryCount: 0
 };
 
 function renderBubble(text, who, reason = '') {
@@ -237,6 +241,8 @@ function resetDiagnosisExperience() {
   state.audit = null;
   state.fileAnalysisStartedAt = 0;
   state.fileProgressPercent = 0;
+  state.fileResumeAfterBackground = false;
+  state.fileBackgroundRetryCount = 0;
   $('conversation').replaceChildren();
   $('owner-input').value = '';
   $('request-error').textContent = '';
@@ -272,6 +278,62 @@ function fileToBase64(file, { signal, onProgress } = {}) {
     reader.onloadend = () => signal?.removeEventListener('abort', abortReader);
     reader.readAsDataURL(file);
   });
+}
+
+function isImageFile(file) {
+  return Boolean(file && (String(file.type || '').startsWith('image/') || /\.(?:jpe?g|png)$/i.test(file.name || '')));
+}
+
+function loadBrowserImage(file, signal) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    let settled = false;
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      fn(value);
+    };
+    const onAbort = () => {
+      const error = new Error('已取消分析');
+      error.name = 'AbortError';
+      image.src = '';
+      finish(reject, error);
+    };
+    signal?.addEventListener('abort', onAbort, { once:true });
+    image.onload = () => finish(resolve, image);
+    image.onerror = () => finish(reject, new Error('无法读取图片'));
+    image.src = url;
+  });
+}
+
+async function optimizeImageForOcr(file, { signal } = {}) {
+  if (!isImageFile(file)) return file;
+  if (file.size > MAX_SOURCE_IMAGE_BYTES) throw new Error('图片过大，请先裁剪后再上传');
+
+  const image = await loadBrowserImage(file, signal);
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  const longest = Math.max(width, height);
+  if (!width || !height || longest <= MAX_OCR_IMAGE_DIMENSION) return file;
+
+  const scale = MAX_OCR_IMAGE_DIMENSION / longest;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const context = canvas.getContext('2d');
+  if (!context) return file;
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+  const outputType = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png';
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, outputType, outputType === 'image/jpeg' ? 0.9 : undefined));
+  if (!blob) return file;
+  return new File([blob], file.name, { type:outputType, lastModified:file.lastModified || Date.now() });
 }
 
 function fileTypeLabel(type) {
@@ -452,13 +514,14 @@ function applySuccessfulFileAnalysis(file, contentBase64, result) {
   saveSession();
 }
 
-async function analyzeBusinessFile(file) {
+async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
+  if (!file || state.fileAnalysisController) return;
   const capturedDiagnosisId = state.diagnosis.id;
   const previousDocument = state.diagnosis.documents[0] || null;
   state.pendingFile = file;
   $('file-errors').textContent = '';
 
-  if (file.size > MAX_FILE_BYTES) {
+  if (!isImageFile(file) && file.size > MAX_FILE_BYTES) {
     state.pendingFile = null;
     $('file-progress').hidden = true;
     $('file-errors').textContent = `文件过大：当前版本单个文件最大支持 3 MB。${previousDocument ? ' 此前成功分析的资料仍保留。' : ''}`;
@@ -468,19 +531,28 @@ async function analyzeBusinessFile(file) {
   const controller = new AbortController();
   state.fileAnalysisController = controller;
   $('workbook').disabled = true;
-  $('file-status').textContent = previousDocument ? '正在分析新资料；此前成功分析的资料会保留到新结果确认后再替换。' : '';
-  setFileProgress(2, '正在读取文件', { reset:true });
+  $('file-status').textContent = automaticRetry
+    ? '检测到刚才切换到后台后连接中断，正在自动重新分析一次。'
+    : (previousDocument ? '正在分析新资料；此前成功分析的资料会保留到新结果确认后再替换。' : '');
+  setFileProgress(2, isImageFile(file) ? '正在优化图片' : '正在读取文件', { reset:true });
   setFileProgressActions({ analyzing:true, retry:false });
   startFileElapsedTimer();
+  let retryAfterFinally = false;
 
   try {
-    const contentBase64 = await fileToBase64(file, {
+    const transportFile = isImageFile(file) ? await optimizeImageForOcr(file, { signal:controller.signal }) : file;
+    if (transportFile.size > MAX_FILE_BYTES) {
+      throw new Error('优化后的文件仍超过 3 MB，请先裁剪或压缩后再上传');
+    }
+    if (transportFile !== file) setFileProgress(6, '图片已优化，正在读取');
+
+    const contentBase64 = await fileToBase64(transportFile, {
       signal:controller.signal,
-      onProgress:(fraction) => setFileProgress(2 + fraction * 6, '正在读取文件')
+      onProgress:(fraction) => setFileProgress(2 + fraction * 6, transportFile !== file ? '正在读取优化后的图片' : '正在读取文件')
     });
     setFileProgress(8, '文件已读取，正在发送到分析服务');
 
-    const result = await postFileAnalysisStream(file, contentBase64, {
+    const result = await postFileAnalysisStream(transportFile, contentBase64, {
       signal:controller.signal,
       onProgress:(event) => setFileProgress(event?.percent, event?.message)
     });
@@ -488,25 +560,43 @@ async function analyzeBusinessFile(file) {
 
     applySuccessfulFileAnalysis(file, contentBase64, result);
     state.pendingFile = null;
+    state.fileResumeAfterBackground = false;
+    state.fileBackgroundRetryCount = 0;
     setFileProgress(100, '分析完成');
     setFileProgressActions({ analyzing:false, retry:false });
   } catch (error) {
     if (state.diagnosis.id !== capturedDiagnosisId) return;
     const cancelled = error?.name === 'AbortError';
-    let baseMessage;
-    if (cancelled) baseMessage = '已取消分析。';
-    else if (error.status === 429) baseMessage = errorWithRequestId('文件分析请求较频繁，请稍后再试。', error.requestId);
-    else baseMessage = errorWithRequestId(`文件分析失败：${error.message}`, error.requestId);
-    const keepMessage = previousDocument ? ' 此前成功分析的资料仍保留。' : '';
-    $('file-errors').textContent = `${baseMessage}${keepMessage}`;
-    $('file-progress-message').textContent = cancelled ? '分析已取消，可重新分析' : '分析已中断，可重新分析';
-    setFileProgressActions({ analyzing:false, retry:Boolean(state.pendingFile) });
+    const canAutoRetry = !cancelled && state.fileResumeAfterBackground && state.fileBackgroundRetryCount < 1;
+    if (canAutoRetry && document.visibilityState === 'visible') {
+      state.fileBackgroundRetryCount += 1;
+      retryAfterFinally = true;
+      $('file-errors').textContent = '刚才切换到后台后分析连接中断，正在自动重试一次。';
+      $('file-progress-message').textContent = '连接中断，准备自动重新分析';
+      setFileProgressActions({ analyzing:false, retry:false });
+    } else if (canAutoRetry) {
+      $('file-errors').textContent = '分析连接已中断；返回本页面后会自动重新分析一次。';
+      $('file-progress-message').textContent = '等待返回页面后自动重试';
+      setFileProgressActions({ analyzing:false, retry:true });
+    } else {
+      let baseMessage;
+      if (cancelled) baseMessage = '已取消分析。';
+      else if (error.status === 429) baseMessage = errorWithRequestId('文件分析请求较频繁，请稍后再试。', error.requestId);
+      else baseMessage = errorWithRequestId(`文件分析失败：${error.message}`, error.requestId);
+      const keepMessage = previousDocument ? ' 此前成功分析的资料仍保留。' : '';
+      $('file-errors').textContent = `${baseMessage}${keepMessage}`;
+      $('file-progress-message').textContent = cancelled ? '分析已取消，可重新分析' : '分析已中断，可重新分析';
+      setFileProgressActions({ analyzing:false, retry:Boolean(state.pendingFile) });
+    }
   } finally {
     if (state.fileAnalysisController === controller) {
       stopFileElapsedTimer();
       renderFileElapsed();
       $('workbook').disabled = false;
       state.fileAnalysisController = null;
+    }
+    if (retryAfterFinally && state.pendingFile && state.diagnosis.id === capturedDiagnosisId) {
+      setTimeout(() => analyzeBusinessFile(state.pendingFile, { automaticRetry:true }), 0);
     }
   }
 }
@@ -544,6 +634,11 @@ async function downloadReport() {
   }
 }
 
+function retryPendingFile({ automaticRetry = false } = {}) {
+  if (!state.pendingFile || state.fileAnalysisController) return;
+  analyzeBusinessFile(state.pendingFile, { automaticRetry });
+}
+
 $('send').addEventListener('click', sendDiagnosis);
 $('retry-diagnosis').addEventListener('click', () => {
   if (state.pendingDiagnosisRequest) requestDiagnosis();
@@ -554,12 +649,34 @@ $('owner-input').addEventListener('keydown', (event) => {
 });
 $('workbook').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
-  if (file) analyzeBusinessFile(file);
+  if (file) {
+    state.fileResumeAfterBackground = false;
+    state.fileBackgroundRetryCount = 0;
+    analyzeBusinessFile(file);
+  }
 });
-$('cancel-file').addEventListener('click', () => state.fileAnalysisController?.abort());
+$('cancel-file').addEventListener('click', () => {
+  state.fileResumeAfterBackground = false;
+  state.fileAnalysisController?.abort();
+});
 $('retry-file').addEventListener('click', () => {
-  if (state.pendingFile && !state.fileAnalysisController) analyzeBusinessFile(state.pendingFile);
+  state.fileResumeAfterBackground = false;
+  state.fileBackgroundRetryCount = 0;
+  retryPendingFile();
 });
 $('download-excel').addEventListener('click', downloadReport);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && state.fileAnalysisController && state.pendingFile) {
+    state.fileResumeAfterBackground = true;
+    $('file-progress-message').textContent = '页面已切到后台；若连接被系统中断，返回后会自动重试一次';
+    return;
+  }
+  if (document.visibilityState === 'visible' && state.fileResumeAfterBackground && !state.fileAnalysisController && state.pendingFile && state.fileBackgroundRetryCount < 1) {
+    state.fileBackgroundRetryCount += 1;
+    $('file-errors').textContent = '检测到后台切换导致连接中断，正在自动重新分析一次。';
+    retryPendingFile({ automaticRetry:true });
+  }
+});
 
 restoreSession();

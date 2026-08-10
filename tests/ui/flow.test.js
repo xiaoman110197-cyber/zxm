@@ -52,6 +52,23 @@ test('current Base64 upload transport blocks files above 3 MB before the request
   assert.match(js, /3\s*MB/);
 });
 
+test('mobile images are resized before OCR transport when they are unnecessarily large', () => {
+  assert.match(js, /MAX_OCR_IMAGE_DIMENSION\s*=\s*2000/);
+  assert.match(js, /optimizeImageForOcr/);
+  assert.match(js, /createElement\(['"]canvas['"]\)/);
+  assert.match(js, /drawImage\(/);
+  assert.match(js, /toBlob\(/);
+  assert.match(js, /正在优化图片/);
+});
+
+test('switching the page to the background pauses a long file request and automatically retries once on return', () => {
+  assert.match(js, /visibilitychange/);
+  assert.match(js, /visibilityState/);
+  assert.match(js, /fileResumeAfterBackground/);
+  assert.match(js, /fileBackgroundRetryCount/);
+  assert.match(js, /自动重新分析|自动重试/);
+});
+
 test('file analysis exposes live percent stage elapsed time cancel and retry', () => {
   assert.match(html, /id="file-progress"/);
   assert.match(html, /role="progressbar"/);
