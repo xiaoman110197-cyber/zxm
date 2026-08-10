@@ -3,7 +3,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
-    "api/analyze-file.js": { "maxDuration": 60 },
+    "api/analyze-file.js": { "maxDuration": 180 },
     "api/diagnosis.js": { "maxDuration": 45 }
   },
   "headers": [
