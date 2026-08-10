@@ -95,6 +95,24 @@ test('stream failures expose a request id without leaking parser detail', async 
   assert.doesNotMatch(payload, /sensitive parser internals/);
 });
 
+test('OCR initialization timeout returns a specific safe retry message with request id', async () => {
+  const res = mockStreamRes();
+  const req = { method:'POST', query:{ stream:'1' }, body:{ file:{ name:'screen.png', contentBase64:Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1]).toString('base64') } } };
+  await handleAnalyzeFileRequest(req, res, {
+    requestId:'req-ocr-timeout',
+    parseBusinessDocument: async () => {
+      const error = new Error('internal worker initialization exceeded 20000ms');
+      error.code = 'OCR_INIT_TIMEOUT';
+      throw error;
+    }
+  });
+  const payload = res.chunks.join('');
+  assert.match(payload, /event: error/);
+  assert.match(payload, /图片文字识别初始化超时，请重新分析/);
+  assert.match(payload, /req-ocr-timeout/);
+  assert.doesNotMatch(payload, /internal worker initialization exceeded/);
+});
+
 test('structured upload gives AI bounded row evidence and a concise audit summary', async () => {
   const res = mockRes();
   await handleAnalyzeFileRequest({ method:'POST', body:{ file:{ name:'经营报表.xlsx', contentBase64:workbookBase64() } } }, res);

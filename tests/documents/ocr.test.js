@@ -9,18 +9,20 @@ function workerResult(text = '营业额 88', confidence = 91) {
   return { data:{ text, confidence } };
 }
 
-test('ships simplified-Chinese and English traineddata as local dependencies', () => {
+test('ships only the simplified-Chinese traineddata needed for Chinese business screenshots', () => {
   assert.equal(pkg.dependencies?.['@tesseract.js-data/chi_sim'], '1.0.0');
-  assert.equal(pkg.dependencies?.['@tesseract.js-data/eng'], '1.0.0');
+  assert.equal(pkg.dependencies?.['@tesseract.js-data/eng'], undefined);
 });
 
-test('uses a bundled local langPath and terminates the worker after success', async () => {
+test('uses one simplified-Chinese worker with bundled local langPath and terminates after success', async () => {
+  let receivedLanguages;
   let receivedOptions;
   let terminateCount = 0;
   const progress = [];
   const imageOcr = createBundledImageOcr({
     prepareTessdata: async () => '/tmp/zhenduan-local-tessdata',
-    createWorker: async (_langs, _oem, options) => {
+    createWorker: async (languages, _oem, options) => {
+      receivedLanguages = languages;
       receivedOptions = options;
       options.logger?.({ status:'recognizing text', progress:0.5 });
       return {
@@ -34,6 +36,7 @@ test('uses a bundled local langPath and terminates the worker after success', as
 
   assert.equal(result.text, '营业额 88');
   assert.equal(result.confidence, 0.91);
+  assert.equal(receivedLanguages, 'chi_sim');
   assert.equal(receivedOptions.langPath, '/tmp/zhenduan-local-tessdata');
   assert.equal(receivedOptions.cachePath, '/tmp/zhenduan-local-tessdata');
   assert.equal(terminateCount, 1);
@@ -79,5 +82,30 @@ test('terminates an initialized worker even when recognition fails', async () =>
   });
 
   await assert.rejects(() => imageOcr(Buffer.from('bad')), /worker crashed/);
+  assert.equal(terminateCount, 1);
+});
+
+test('times out worker initialization and terminates a worker that resolves late', async () => {
+  let recognizeCount = 0;
+  let terminateCount = 0;
+  const imageOcr = createBundledImageOcr({
+    workerInitTimeoutMs: 10,
+    prepareTessdata: async () => '/tmp/local-tessdata',
+    createWorker: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 35));
+      return {
+        async recognize() { recognizeCount += 1; return workerResult(); },
+        async terminate() { terminateCount += 1; }
+      };
+    }
+  });
+
+  await assert.rejects(
+    () => imageOcr(Buffer.from('slow')),
+    (error) => error?.code === 'OCR_INIT_TIMEOUT' && /初始化|timeout/i.test(error.message)
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(recognizeCount, 0);
   assert.equal(terminateCount, 1);
 });

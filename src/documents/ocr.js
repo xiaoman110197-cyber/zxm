@@ -4,16 +4,11 @@ import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const DEFAULT_TESSDATA_DIR = process.env.TESSERACT_CACHE_PATH || '/tmp/zhenduan-tessdata';
+const DEFAULT_WORKER_INIT_TIMEOUT_MS = 20_000;
 let bundledTessdataPromise = null;
 
-function bundledLanguageSource(language) {
-  if (language === 'chi_sim') {
-    return require.resolve('@tesseract.js-data/chi_sim/4.0.0_best_int/chi_sim.traineddata.gz');
-  }
-  if (language === 'eng') {
-    return require.resolve('@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz');
-  }
-  throw new Error(`unsupported OCR language: ${language}`);
+function bundledLanguageSource() {
+  return require.resolve('@tesseract.js-data/chi_sim/4.0.0_best_int/chi_sim.traineddata.gz');
 }
 
 export async function prepareBundledTessdata(targetDir = DEFAULT_TESSDATA_DIR) {
@@ -21,11 +16,9 @@ export async function prepareBundledTessdata(targetDir = DEFAULT_TESSDATA_DIR) {
 
   const prepare = async () => {
     await mkdir(targetDir, { recursive:true });
-    await Promise.all(['chi_sim','eng'].map(async (language) => {
-      const source = bundledLanguageSource(language);
-      const destination = path.join(targetDir, `${language}.traineddata.gz`);
-      await copyFile(source, destination);
-    }));
+    const source = bundledLanguageSource();
+    const destination = path.join(targetDir, 'chi_sim.traineddata.gz');
+    await copyFile(source, destination);
     return targetDir;
   };
 
@@ -37,7 +30,44 @@ export async function prepareBundledTessdata(targetDir = DEFAULT_TESSDATA_DIR) {
   return bundledTessdataPromise;
 }
 
-export function createBundledImageOcr({ createWorker: injectedCreateWorker, prepareTessdata = prepareBundledTessdata } = {}) {
+function workerInitTimeoutError(timeoutMs) {
+  const error = new Error(`OCR worker 初始化超时 (${timeoutMs}ms)`);
+  error.code = 'OCR_INIT_TIMEOUT';
+  return error;
+}
+
+async function createWorkerWithTimeout(createWorker, options, timeoutMs) {
+  const workerPromise = Promise.resolve().then(() => createWorker('chi_sim', 1, options));
+  let timer;
+  let timedOut = false;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(workerInitTimeoutError(timeoutMs));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([workerPromise, timeoutPromise]);
+  } catch (error) {
+    if (timedOut) {
+      workerPromise
+        .then(async (lateWorker) => {
+          try { await lateWorker?.terminate?.(); } catch {}
+        })
+        .catch(() => {});
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function createBundledImageOcr({
+  createWorker: injectedCreateWorker,
+  prepareTessdata = prepareBundledTessdata,
+  workerInitTimeoutMs = DEFAULT_WORKER_INIT_TIMEOUT_MS
+} = {}) {
   async function loadCreateWorker() {
     if (injectedCreateWorker) return injectedCreateWorker;
     const module = await import('tesseract.js');
@@ -51,11 +81,12 @@ export function createBundledImageOcr({ createWorker: injectedCreateWorker, prep
     ]);
     let worker;
     try {
-      worker = await createWorker(['chi_sim','eng'], 1, {
+      worker = await createWorkerWithTimeout(createWorker, {
         langPath:tessdataDir,
         cachePath:tessdataDir,
+        gzip:true,
         logger:(message) => reportProgress?.(message)
-      });
+      }, workerInitTimeoutMs);
       const result = await worker.recognize(buffer);
       return {
         text:String(result.data?.text || '').trim(),

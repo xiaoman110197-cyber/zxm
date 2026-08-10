@@ -122,6 +122,11 @@ function safeProgressStage(value) {
   return /^[a-z0-9_-]{1,40}$/i.test(stage) ? stage : '-';
 }
 
+function safeParseErrorMessage(error) {
+  if (error?.code === 'OCR_INIT_TIMEOUT') return '图片文字识别初始化超时，请重新分析';
+  return '文件损坏、格式不匹配或内容无法解析';
+}
+
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   const requestId = deps.requestId || randomUUID();
   const startedAt = Date.now();
@@ -191,13 +196,14 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
     }
     return res.status(200).json(payload);
   } catch (error) {
-    logError('[analyze-file]', requestId, 'failed', Date.now() - startedAt, error?.name || 'Error');
+    const clientMessage = safeParseErrorMessage(error);
+    logError('[analyze-file]', requestId, 'failed', Date.now() - startedAt, error?.code || error?.name || 'Error');
     if (streamMode) {
-      writeSse(res, 'error', { error:'文件损坏、格式不匹配或内容无法解析', requestId });
+      writeSse(res, 'error', { error:clientMessage, requestId });
       res.end();
       return;
     }
-    return jsonError(res, 422, '文件损坏、格式不匹配或内容无法解析', requestId);
+    return jsonError(res, 422, clientMessage, requestId);
   }
 }
 
