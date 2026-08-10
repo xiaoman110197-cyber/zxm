@@ -2,6 +2,7 @@ import { auditWorkbook } from '../src/audit/rules.js';
 import { parseBusinessDocument, supportedBusinessDocumentExtensions } from '../src/documents/parse.js';
 
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
+const MAX_CONTEXT_ISSUES = 10;
 
 function normalizeAudit(audit) {
   return {
@@ -39,6 +40,28 @@ function countRows(workbook) {
   return workbook?.sheets?.reduce((sum, sheet) => sum + sheet.rows.length, 0) || 0;
 }
 
+function compactIssue(issue) {
+  const keys = ['type','sheet','row','field','reason','metric','expected','actual','duplicateOf','sourceSheet','summarySheet','confidence'];
+  const compact = {};
+  for (const key of keys) {
+    if (issue?.[key] !== undefined && issue?.[key] !== null) compact[key] = issue[key];
+  }
+  return compact;
+}
+
+function attachAuditSummary(document, audit) {
+  return {
+    ...document,
+    auditSummary: {
+      errorCount: audit.errors.length,
+      anomalyCount: audit.anomalies.length,
+      metrics: audit.metrics,
+      topIssues: audit.errors.slice(0, MAX_CONTEXT_ISSUES).map(compactIssue),
+      topAnomalies: audit.anomalies.slice(0, MAX_CONTEXT_ISSUES).map(compactIssue)
+    }
+  };
+}
+
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   if (req.method && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const file = req.body?.file;
@@ -64,19 +87,20 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
     const parser = deps.parseBusinessDocument || parseBusinessDocument;
     const parsed = await parser({ name:file.name, buffer }, deps);
     const audit = parsed.workbook ? normalizeAudit(auditWorkbook(parsed.workbook)) : emptyAudit();
-    const warnings = Array.isArray(parsed.document.warnings) ? parsed.document.warnings : [];
+    const document = attachAuditSummary(parsed.document, audit);
+    const warnings = Array.isArray(document.warnings) ? document.warnings : [];
     return res.status(200).json({
-      document: parsed.document,
+      document,
       audit,
       summary: {
-        fileType: parsed.document.type,
+        fileType: document.type,
         sheetCount: parsed.workbook?.sheets?.length || 0,
         rowCount: countRows(parsed.workbook),
-        textLength: typeof parsed.document.text === 'string' ? parsed.document.text.length : 0,
+        textLength: typeof document.text === 'string' ? document.text.length : 0,
         warningCount: warnings.length,
         errorCount: audit.errors.length,
         anomalyCount: audit.anomalies.length,
-        confidence: typeof parsed.document.confidence === 'number' ? parsed.document.confidence : null,
+        confidence: typeof document.confidence === 'number' ? document.confidence : null,
         metrics: audit.metrics
       }
     });
