@@ -145,8 +145,7 @@ export async function analyzeReportImage(input, {
       model:null,
       facts:[],
       candidates:[],
-      failureCode:'VISION_KEY_MISSING',
-      warning:'视觉分析暂不可用（错误编号 VISION_KEY_MISSING），已使用文字识别继续检查'
+      warning:'视觉分析暂不可用，已使用文字识别继续检查'
     };
   }
 
