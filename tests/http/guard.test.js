@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkBurstLimit, resetBurstLimitsForTests } from '../../src/http/guard.js';
+import { checkBurstLimit, requestClientKey, resetBurstLimitsForTests } from '../../src/http/guard.js';
 
 test('allows ordinary multi-turn usage within the burst window', () => {
   resetBurstLimitsForTests();
@@ -24,4 +24,10 @@ test('allows requests again after the window expires and does not share empty id
   assert.equal(checkBurstLimit('diagnosis:a', { limit:1, windowMs:1000, now:1200 }).allowed, true);
   assert.equal(checkBurstLimit('', { limit:1, windowMs:1000, now:100 }).allowed, true);
   assert.equal(checkBurstLimit('', { limit:1, windowMs:1000, now:101 }).allowed, true);
+});
+
+test('derives a route-scoped client key from Vercel forwarding headers', () => {
+  assert.equal(requestClientKey({ headers:{ 'x-vercel-forwarded-for':'1.2.3.4, 5.6.7.8' } }, 'file'), 'file:1.2.3.4');
+  assert.equal(requestClientKey({ headers:{ 'x-forwarded-for':'9.8.7.6' } }, 'diagnosis'), 'diagnosis:9.8.7.6');
+  assert.equal(requestClientKey({ headers:{} }, 'diagnosis'), '');
 });
