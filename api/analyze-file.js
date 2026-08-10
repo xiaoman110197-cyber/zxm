@@ -76,7 +76,7 @@ function attachAuditSummary(document, audit) {
   };
 }
 
-function buildPayload(parsed, requestId, reportReview = null) {
+function buildPayload(parsed, requestId, reportData = null) {
   const audit = parsed.workbook ? normalizeAudit(auditWorkbook(parsed.workbook)) : emptyAudit();
   const document = attachAuditSummary(parsed.document, audit);
   const corrections = detectCalculationCorrections({ workbook:parsed.workbook, audit, document });
@@ -99,14 +99,24 @@ function buildPayload(parsed, requestId, reportReview = null) {
       metrics: audit.metrics
     }
   };
-  if (reportReview) {
-    payload.reportReview = reportReview;
-    payload.summary.reportProblemCount = reportReview.summary.problemCount;
-    payload.summary.reportCorrectionCount = reportReview.summary.provableCorrectionCount;
-    payload.summary.reportConfirmationCount = reportReview.summary.confirmationCount;
-    payload.summary.visionAvailable = reportReview.summary.visionAvailable;
+  if (reportData) {
+    payload.reportReview = reportData.reportReview;
+    payload.reportFacts = reportData.reportFacts;
+    payload.summary.reportProblemCount = reportData.reportReview.summary.problemCount;
+    payload.summary.reportCorrectionCount = reportData.reportReview.summary.provableCorrectionCount;
+    payload.summary.reportConfirmationCount = reportData.reportReview.summary.confirmationCount;
+    payload.summary.visionAvailable = reportData.reportReview.summary.visionAvailable;
   }
   return payload;
+}
+
+function confirmationFactIds(confirmations) {
+  const ids = new Set();
+  for (const item of confirmations || []) {
+    if (typeof item?.factId === 'string' && item.factId) ids.add(item.factId);
+    else if (typeof item?.id === 'string' && item.id.startsWith('confirm:')) ids.add(item.id.slice('confirm:'.length));
+  }
+  return ids;
 }
 
 async function analyzeImageReport({ file, buffer, parsed, extension, deps, observeProgress }) {
@@ -121,12 +131,15 @@ async function analyzeImageReport({ file, buffer, parsed, extension, deps, obser
   observeProgress({ phase:'report-check', percent:96, message:'正在复算公式并检查数据逻辑', stage:'checking-rules' });
   const reconciled = buildReportFacts({ visionFacts:vision.facts || [], ocrDocument:parsed.document || {} });
   const ruleIssues = inspectReportFacts(reconciled.facts, { now:deps.now || new Date() });
-  return buildReportReview({
+  const reportReview = buildReportReview({
     ruleIssues,
     visionCandidates:vision.candidates || [],
     confirmations:reconciled.confirmations,
     vision
   });
+  const conflicted = confirmationFactIds(reconciled.confirmations);
+  const reportFacts = reconciled.facts.map((fact) => ({ ...fact, trusted:!conflicted.has(fact.id) }));
+  return { reportReview, reportFacts };
 }
 
 function isStreamRequest(req) {
@@ -223,13 +236,13 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
     const parser = deps.parseBusinessDocument || parseBusinessDocument;
     const parserDeps = { ...deps, onProgress:observeProgress };
     const parsed = await parser({ name:file.name, buffer }, parserDeps);
-    let reportReview = null;
+    let reportData = null;
     if (parsed.document?.type === 'image') {
-      reportReview = await analyzeImageReport({ file, buffer, parsed, extension, deps, observeProgress });
+      reportData = await analyzeImageReport({ file, buffer, parsed, extension, deps, observeProgress });
     } else if (streamMode) {
       observeProgress({ phase:'audit', percent:90, message:'正在检查数据质量并整理结果' });
     }
-    const payload = buildPayload(parsed, requestId, reportReview);
+    const payload = buildPayload(parsed, requestId, reportData);
 
     logInfo('[analyze-file]', requestId, 'complete', Date.now() - startedAt);
     if (streamMode) {
