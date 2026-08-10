@@ -13,6 +13,24 @@ test('mobile flow starts from free description instead of a fixed questionnaire'
   assert.match(js, /\/api\/diagnosis/);
 });
 
+test('diagnosis can be resumed, retried, or explicitly restarted', () => {
+  assert.match(html, /id="new-diagnosis"/);
+  assert.match(html, /id="retry-diagnosis"/);
+  assert.match(html, /开始新问诊/);
+  assert.match(html, /重试本轮/);
+  assert.match(js, /saveSession/);
+  assert.match(js, /restoreSession/);
+  assert.match(js, /requestDiagnosis/);
+  assert.match(js, /pendingDiagnosisRequest/);
+  assert.match(js, /错误编号/);
+});
+
+test('AI follow-up can explain why the question matters without replacing the question', () => {
+  assert.match(js, /为什么问这个/);
+  assert.match(css, /bubble-reason/);
+  assert.match(js, /question\.reason/);
+});
+
 test('business-material upload is optional and exposes five mainstream categories', () => {
   assert.match(html, /上传经营资料/);
   assert.match(html, /type="file"/);
