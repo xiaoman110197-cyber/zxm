@@ -26,3 +26,41 @@ jobs:
         run: npm test
       - name: Build production bundle
         run: npm run build
+      - name: Production OCR runtime smoke
+        if: github.ref == 'refs/heads/fix/ocr-production-smoke'
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+
+          const source = readFileSync('tests/documents/real-ocr.test.js', 'utf8');
+          const match = source.match(/const PNG_BASE64 = '([^']+)'/s);
+          if (!match) throw new Error('OCR fixture not found');
+
+          const response = await fetch('https://zhenduan-v03-preview.vercel.app/api/analyze-file?stream=1', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ file:{ name:'production-smoke.png', contentBase64:match[1] } }),
+            signal: AbortSignal.timeout(40000)
+          });
+          const body = await response.text();
+          console.log(`production OCR HTTP ${response.status}`);
+
+          const blocks = body.split('\n\n').filter(Boolean);
+          const resultBlock = blocks.find((block) => block.startsWith('event: result'));
+          const errorBlock = blocks.find((block) => block.startsWith('event: error'));
+          if (!resultBlock) {
+            if (errorBlock) {
+              const dataLine = errorBlock.split('\n').find((line) => line.startsWith('data: '));
+              const payload = dataLine ? JSON.parse(dataLine.slice(6)) : {};
+              console.log(`production OCR safe error: ${payload.error || 'unknown'}`);
+            }
+            throw new Error('production OCR did not reach result event');
+          }
+
+          const dataLine = resultBlock.split('\n').find((line) => line.startsWith('data: '));
+          const payload = JSON.parse(dataLine.slice(6));
+          if (!/营业\s*额/.test(payload.document?.text || '') || !/88/.test(payload.document?.text || '')) {
+            throw new Error('production OCR result did not recognize the synthetic Chinese+numeric fixture');
+          }
+          console.log('production OCR runtime smoke: PASS');
+          NODE
