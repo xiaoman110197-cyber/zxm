@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 const config = JSON.parse(await readFile(new URL('../../vercel.json', import.meta.url), 'utf8'));
 
 test('long-running analysis and diagnosis functions have explicit duration limits', () => {
-  assert.equal(config.functions?.['api/analyze-file.js']?.maxDuration, 60);
+  assert.equal(config.functions?.['api/analyze-file.js']?.maxDuration, 180);
   assert.equal(config.functions?.['api/diagnosis.js']?.maxDuration, 45);
 });
 
