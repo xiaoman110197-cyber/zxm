@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { auditWorkbook } from '../src/audit/rules.js';
 import { parseBusinessDocument, supportedBusinessDocumentExtensions } from '../src/documents/parse.js';
 
@@ -62,11 +63,12 @@ function attachAuditSummary(document, audit) {
   };
 }
 
-function buildPayload(parsed) {
+function buildPayload(parsed, requestId) {
   const audit = parsed.workbook ? normalizeAudit(auditWorkbook(parsed.workbook)) : emptyAudit();
   const document = attachAuditSummary(parsed.document, audit);
   const warnings = Array.isArray(document.warnings) ? document.warnings : [];
   return {
+    requestId,
     document,
     audit,
     summary: {
@@ -99,61 +101,66 @@ function writeSse(res, event, data) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
+function jsonError(res, status, error, requestId) {
+  return res.status(status).json({ error, requestId });
+}
+
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
-  if (req.method && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const requestId = deps.requestId || randomUUID();
+  const startedAt = Date.now();
+  if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
   const file = req.body?.file;
-  if (!file?.name || !file?.contentBase64) return res.status(400).json({ error: 'file with name and contentBase64 is required' });
+  if (!file?.name || !file?.contentBase64) return jsonError(res, 400, 'file with name and contentBase64 is required', requestId);
 
   const extension = extensionOf(file.name);
   if (!supportedBusinessDocumentExtensions.includes(extension)) {
-    return res.status(415).json({ error: '支持 Excel、CSV、PDF、Word DOCX 和 JPG/PNG 图片' });
+    return jsonError(res, 415, '支持 Excel、CSV、PDF、Word DOCX 和 JPG/PNG 图片', requestId);
   }
 
   let buffer;
   try {
     buffer = Buffer.from(file.contentBase64, 'base64');
   } catch {
-    return res.status(422).json({ error: '文件内容损坏或无法解析' });
+    return jsonError(res, 422, '文件内容损坏或无法解析', requestId);
   }
-  if (!buffer.length) return res.status(422).json({ error: '文件内容为空或无法解析' });
+  if (!buffer.length) return jsonError(res, 422, '文件内容为空或无法解析', requestId);
   if (buffer.length > MAX_FILE_BYTES) {
-    return res.status(413).json({ error: '文件过大：当前版本单个文件最大支持 3 MB' });
+    return jsonError(res, 413, '文件过大：当前版本单个文件最大支持 3 MB', requestId);
   }
 
   const streamMode = isStreamRequest(req);
+  const emitProgress = (event) => writeSse(res, 'progress', { requestId, ...event });
   if (streamMode) {
     startEventStream(res);
-    writeSse(res, 'progress', { phase:'preparing', percent:10, message:'文件已接收，准备分析' });
+    emitProgress({ phase:'preparing', percent:10, message:'文件已接收，准备分析' });
   }
 
   try {
     const parser = deps.parseBusinessDocument || parseBusinessDocument;
     const parserDeps = {
       ...deps,
-      onProgress: streamMode
-        ? (event) => writeSse(res, 'progress', event)
-        : deps.onProgress
+      onProgress: streamMode ? emitProgress : deps.onProgress
     };
     const parsed = await parser({ name:file.name, buffer }, parserDeps);
-    if (streamMode) writeSse(res, 'progress', { phase:'audit', percent:90, message:'正在检查数据质量并整理结果' });
-    const payload = buildPayload(parsed);
+    if (streamMode) emitProgress({ phase:'audit', percent:90, message:'正在检查数据质量并整理结果' });
+    const payload = buildPayload(parsed, requestId);
 
+    console.info('[analyze-file]', requestId, 'complete', Date.now() - startedAt);
     if (streamMode) {
-      writeSse(res, 'progress', { phase:'complete', percent:100, message:'分析完成' });
+      emitProgress({ phase:'complete', percent:100, message:'分析完成' });
       writeSse(res, 'result', payload);
       res.end();
       return;
     }
     return res.status(200).json(payload);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error('[analyze-file]', file.name, detail);
+    console.error('[analyze-file]', requestId, 'failed', Date.now() - startedAt, error?.name || 'Error');
     if (streamMode) {
-      writeSse(res, 'error', { error:'文件损坏、格式不匹配或内容无法解析' });
+      writeSse(res, 'error', { error:'文件损坏、格式不匹配或内容无法解析', requestId });
       res.end();
       return;
     }
-    return res.status(422).json({ error: '文件损坏、格式不匹配或内容无法解析', detail });
+    return jsonError(res, 422, '文件损坏、格式不匹配或内容无法解析', requestId);
   }
 }
 
