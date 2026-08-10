@@ -612,7 +612,11 @@ function resetUploadedFileState() {
   state.audit = null;
   clearPendingFileReview();
   state.diagnosis.documents = [];
-  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && item.startsWith('file_analysis:')));
+  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && (
+    item.startsWith('file_analysis:') ||
+    item.startsWith('correction_decision:') ||
+    item.startsWith('file_review:')
+  )));
   updateDownloadState();
 }
 
@@ -726,7 +730,34 @@ async function postFileAnalysisStream(file, contentBase64, { signal, onProgress 
   return readAnalysisStream(response, onProgress);
 }
 
-function commitSuccessfulFileAnalysis(file, contentBase64, result) {
+function correctionDecisionEvidence(pending) {
+  const corrections = (pending?.result?.corrections || []).filter((item) => item.kind === 'calculation_error');
+  return corrections.map((correction, index) => {
+    const choice = pending.correctionDecisions[index];
+    const decision = choice === 'accept' ? 'accepted' : 'kept_original';
+    return `correction_decision:${JSON.stringify({
+      label:correction.label,
+      originalValue:correction.originalValue,
+      correctedValue:correction.correctedValue,
+      decision,
+      explanation:correction.explanation || ''
+    })}`;
+  });
+}
+
+function unresolvedReviewEvidence(result) {
+  return (result?.corrections || [])
+    .filter((item) => item.kind !== 'calculation_error')
+    .map((item) => `file_review:${JSON.stringify({
+      kind:item.kind,
+      label:item.label,
+      originalValue:item.originalValue,
+      explanation:item.explanation || '',
+      evidence:Array.isArray(item.evidence) ? item.evidence : []
+    })}`);
+}
+
+function commitSuccessfulFileAnalysis(file, contentBase64, result, reviewEvidence = []) {
   if (result.document.type === 'excel') {
     state.originalFile = file;
     state.originalBase64 = contentBase64;
@@ -737,8 +768,12 @@ function commitSuccessfulFileAnalysis(file, contentBase64, result) {
 
   state.audit = result.audit;
   state.diagnosis.documents = [result.document];
-  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && item.startsWith('file_analysis:')));
-  state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`);
+  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && (
+    item.startsWith('file_analysis:') ||
+    item.startsWith('correction_decision:') ||
+    item.startsWith('file_review:')
+  )));
+  state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`, ...reviewEvidence);
   $('file-status').textContent = fileStatusText(result);
   $('file-errors').textContent = '';
   updateDownloadState();
@@ -765,9 +800,13 @@ function applySuccessfulFileAnalysis(file, contentBase64, result) {
 function confirmPendingFileReview() {
   const pending = state.pendingFileReview;
   if (!pending || $('confirm-file').disabled) return;
+  const reviewEvidence = [
+    ...correctionDecisionEvidence(pending),
+    ...unresolvedReviewEvidence(pending.result)
+  ];
   state.pendingFileReview = null;
   hideFileReview();
-  commitSuccessfulFileAnalysis(pending.file, pending.contentBase64, pending.result);
+  commitSuccessfulFileAnalysis(pending.file, pending.contentBase64, pending.result, reviewEvidence);
   $('file-status').textContent = `${fileStatusText(pending.result)} 已确认资料检查结果。`;
 }
 
@@ -784,8 +823,6 @@ function chooseCorrection(index, choice) {
   const pending = state.pendingFileReview;
   if (!pending) return;
   pending.correctionDecisions[index] = choice;
-  const card = $(`file-review-correction-${index}`);
-  void card;
   for (const button of document.querySelectorAll(`[data-correction-index="${index}"]`)) {
     button.classList.toggle('selected', button.dataset.correctionChoice === choice);
   }
