@@ -1,7 +1,19 @@
 import { analyzeUploadedBusinessFile, FileAnalysisError } from '../src/documents/analyze.js';
+import { clientIp, createBurstLimiter } from '../src/http/guards.js';
+
+const fileAnalysisLimiter = createBurstLimiter({ limit:20, windowMs:60_000 });
+
+function checkRateLimit(req, res, limiter) {
+  const check = limiter.check(clientIp(req));
+  if (check.allowed) return false;
+  if (typeof res.setHeader === 'function') res.setHeader('Retry-After', String(check.retryAfterSeconds));
+  res.status(429).json({ error:'文件分析请求过于频繁，请稍后再试' });
+  return true;
+}
 
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   if (req.method && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (checkRateLimit(req, res, deps.rateLimiter || fileAnalysisLimiter)) return res;
 
   const analyze = deps.analyzeUploadedBusinessFile || analyzeUploadedBusinessFile;
   try {
