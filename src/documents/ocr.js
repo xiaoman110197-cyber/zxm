@@ -6,14 +6,8 @@ const require = createRequire(import.meta.url);
 const DEFAULT_TESSDATA_DIR = process.env.TESSERACT_CACHE_PATH || '/tmp/zhenduan-tessdata';
 let bundledTessdataPromise = null;
 
-function bundledLanguageSource(language) {
-  if (language === 'chi_sim') {
-    return require.resolve('@tesseract.js-data/chi_sim/4.0.0_best_int/chi_sim.traineddata.gz');
-  }
-  if (language === 'eng') {
-    return require.resolve('@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz');
-  }
-  throw new Error(`unsupported OCR language: ${language}`);
+function bundledLanguageSource() {
+  return require.resolve('@tesseract.js-data/chi_sim/4.0.0_best_int/chi_sim.traineddata.gz');
 }
 
 export async function prepareBundledTessdata(targetDir = DEFAULT_TESSDATA_DIR) {
@@ -21,11 +15,9 @@ export async function prepareBundledTessdata(targetDir = DEFAULT_TESSDATA_DIR) {
 
   const prepare = async () => {
     await mkdir(targetDir, { recursive:true });
-    await Promise.all(['chi_sim','eng'].map(async (language) => {
-      const source = bundledLanguageSource(language);
-      const destination = path.join(targetDir, `${language}.traineddata.gz`);
-      await copyFile(source, destination);
-    }));
+    const source = bundledLanguageSource();
+    const destination = path.join(targetDir, 'chi_sim.traineddata.gz');
+    await copyFile(source, destination);
     return targetDir;
   };
 
@@ -51,9 +43,10 @@ export function createBundledImageOcr({ createWorker: injectedCreateWorker, prep
     ]);
     let worker;
     try {
-      worker = await createWorker(['chi_sim','eng'], 1, {
+      worker = await createWorker('chi_sim', 1, {
         langPath:tessdataDir,
         cachePath:tessdataDir,
+        gzip:true,
         logger:(message) => reportProgress?.(message)
       });
       const result = await worker.recognize(buffer);
