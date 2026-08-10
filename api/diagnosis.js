@@ -104,7 +104,7 @@ function logDiagnosisError(stage, error) {
   console.error('[diagnosis]', stage, errorMessage(error));
 }
 
-// Kept for compatibility with existing tests and callers; new runtime routing uses providers below.
+// Kept for compatibility with existing tests and callers; runtime routing uses providers below.
 export async function callOpenAiDiagnosis(diagnosis, { apiKey, fetchImpl = fetch, model = process.env.OPENAI_MODEL || 'gpt-5-mini' } = {}) {
   const response = await fetchImpl('https://api.openai.com/v1/responses', {
     method:'POST', headers:{ Authorization:`Bearer ${apiKey}`, 'Content-Type':'application/json' },
@@ -112,7 +112,9 @@ export async function callOpenAiDiagnosis(diagnosis, { apiKey, fetchImpl = fetch
       model,
       instructions:'你是经营诊断助手。不得把猜测写成事实。信息不足时只追问一个问题；证据足够时输出结构化 findings。',
       input:JSON.stringify(diagnosis),
-      text:{ format:{ type:'json_schema', name:'zhenduan_diagnosis', strict:true, schema:RESPONSE_SCHEMA } }
+      text:{ format:{ type:'json_schema', name:'zhenduan_diagnosis', strict:true, schema:RESPONSE_SCHEMA } },
+      max_output_tokens:1800,
+      store:false
     })
   });
   if (!response.ok) {
@@ -124,28 +126,32 @@ export async function callOpenAiDiagnosis(diagnosis, { apiKey, fetchImpl = fetch
   return JSON.parse(payload.output_text);
 }
 
-function singleModel(result) {
+function singleModel(result, status = 'single_model') {
   if (result.mode !== 'finding') return result;
-  return { ...result, findings: result.findings.map(f => ({ ...f, crossModelStatus: f.deterministic ? 'program_fact' : 'single_model' })) };
+  return { ...result, findings: result.findings.map(f => ({ ...f, crossModelStatus: f.deterministic ? 'program_fact' : status })) };
 }
 
 function buildRuntimeProviders() {
   const deepSeekKey = process.env.DEEPSEEK_API_KEY || '';
   const openAiKey = process.env.OPENAI_API_KEY || '';
+  const deepSeek = deepSeekKey ? createDeepSeekProvider({ apiKey: deepSeekKey }) : null;
+  const openAi = openAiKey ? createOpenAIProvider({ apiKey: openAiKey }) : null;
 
-  if (deepSeekKey) {
+  if (deepSeek) {
     return {
-      primaryProvider: createDeepSeekProvider({ apiKey: deepSeekKey }),
-      reviewerProvider: openAiKey ? createOpenAIProvider({ apiKey: openAiKey }) : null
+      primaryProvider: deepSeek,
+      fallbackProvider: openAi,
+      reviewerProvider: openAi
     };
   }
-  if (openAiKey) {
-    return {
-      primaryProvider: createOpenAIProvider({ apiKey: openAiKey }),
-      reviewerProvider: deepSeekKey ? createDeepSeekProvider({ apiKey: deepSeekKey, model: process.env.DEEPSEEK_REVIEW_MODEL || 'deepseek-v4-pro' }) : null
-    };
+  if (openAi) {
+    return { primaryProvider:openAi, fallbackProvider:null, reviewerProvider:null };
   }
-  return { primaryProvider: null, reviewerProvider: null };
+  return { primaryProvider:null, fallbackProvider:null, reviewerProvider:null };
+}
+
+async function diagnoseWith(provider, diagnosis) {
+  return validateAiResult(normalizeAiResult(await provider.diagnose(diagnosis)));
 }
 
 export async function handleDiagnosisRequest(req, res, deps = {}) {
@@ -162,32 +168,55 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
       return res.status(200).json(validateAiResult(normalizeAiResult(await ai(diagnosis))));
     } catch (error) {
       logDiagnosisError('legacy-provider', error);
-      return res.status(502).json({ error:'AI diagnosis failed', detail:errorMessage(error) });
+      return res.status(502).json({ error:'AI diagnosis failed' });
     }
   }
 
   const runtime = buildRuntimeProviders();
-  const primaryProvider = deps.primaryProvider || runtime.primaryProvider;
-  const reviewerProvider = deps.reviewerProvider || runtime.reviewerProvider;
+  const primaryProvider = 'primaryProvider' in deps ? deps.primaryProvider : runtime.primaryProvider;
+  const fallbackProvider = 'fallbackProvider' in deps ? deps.fallbackProvider : runtime.fallbackProvider;
+  const reviewerProvider = 'reviewerProvider' in deps ? deps.reviewerProvider : runtime.reviewerProvider;
   if (!primaryProvider?.diagnose) {
-    return res.status(503).json({ error:'Server is missing AI provider key (DEEPSEEK_API_KEY or OPENAI_API_KEY)' });
+    return res.status(503).json({ error:'AI 诊断服务暂时不可用：未配置可用模型' });
   }
 
+  let result;
+  let usedFallback = false;
+  let activeProvider = primaryProvider;
   try {
-    let result = validateAiResult(normalizeAiResult(await primaryProvider.diagnose(diagnosis)));
-    if (result.mode === 'finding') {
-      if (reviewerProvider?.review) {
-        result = await crossReviewDiagnosis(result, { reviewer: (payload) => reviewerProvider.review(payload) });
-      } else {
-        result = singleModel(result);
-      }
-      validateAiResult(result);
+    result = await diagnoseWith(primaryProvider, diagnosis);
+  } catch (primaryError) {
+    logDiagnosisError(`primary:${primaryProvider?.name || 'unknown'}`, primaryError);
+    if (!fallbackProvider?.diagnose) {
+      return res.status(503).json({ error:'AI 诊断服务暂时不可用，请稍后重试' });
     }
-    return res.status(200).json(result);
-  } catch (error) {
-    logDiagnosisError(`runtime-provider:${primaryProvider?.name || 'unknown'}`, error);
-    return res.status(502).json({ error:'AI diagnosis failed', detail:errorMessage(error) });
+    try {
+      result = await diagnoseWith(fallbackProvider, diagnosis);
+      usedFallback = true;
+      activeProvider = fallbackProvider;
+    } catch (fallbackError) {
+      logDiagnosisError(`fallback:${fallbackProvider?.name || 'unknown'}`, fallbackError);
+      return res.status(503).json({ error:'AI 诊断服务暂时不可用，请稍后重试' });
+    }
   }
+
+  if (result.mode === 'finding') {
+    const canReview = !usedFallback && reviewerProvider?.review && reviewerProvider !== activeProvider && reviewerProvider?.name !== activeProvider?.name;
+    if (canReview) {
+      try {
+        result = await crossReviewDiagnosis(result, { reviewer: (payload) => reviewerProvider.review(payload) });
+        validateAiResult(result);
+      } catch (reviewError) {
+        logDiagnosisError(`reviewer:${reviewerProvider?.name || 'unknown'}`, reviewError);
+        result = singleModel(result, 'review_unavailable');
+      }
+    } else {
+      result = singleModel(result);
+    }
+  }
+
+  if (usedFallback) result = { ...result, providerFallback:true };
+  return res.status(200).json(result);
 }
 
 export default async function handler(req, res) {
