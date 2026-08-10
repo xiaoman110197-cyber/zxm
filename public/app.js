@@ -1,4 +1,5 @@
 import { SESSION_KEY, createSessionSnapshot, restoreSessionSnapshot } from './session.js';
+import { buildFileReviewModel } from './file-review.js';
 
 const $ = (id) => document.getElementById(id);
 const PRIORITIES = ['P0', 'P1', 'P2'];
@@ -226,11 +227,26 @@ function stopFileElapsedTimer() {
   state.fileElapsedTimer = null;
 }
 
+function clearNode(id) {
+  $(id)?.replaceChildren();
+}
+
 function hideFileReview() {
   $('file-review').hidden = true;
+  clearNode('file-review-summary');
+  clearNode('file-review-corrections-list');
+  clearNode('file-review-important-list');
+  clearNode('file-review-other-list');
   $('file-review-text').textContent = '';
   $('file-review-warning').textContent = '';
   $('file-review-confidence').textContent = '';
+  $('file-review-corrections').hidden = true;
+  $('file-review-important').hidden = true;
+  $('file-review-other').hidden = true;
+  $('file-review-fulltext').hidden = true;
+  $('file-review-other').open = false;
+  $('file-review-fulltext').open = false;
+  $('confirm-file').disabled = false;
 }
 
 function clearPendingFileReview() {
@@ -369,11 +385,8 @@ function summarizeFileIssues(result) {
     const key = scope ? `${label}（${scope}）` : label;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
-
   const parts = [];
   for (const [label, count] of counts) parts.push(count > 1 ? `${label} × ${count}` : label);
-  const warnings = Array.isArray(result.document?.warnings) ? result.document.warnings : [];
-  for (const warning of warnings) parts.push(`识别提示：${warning}`);
   return parts.slice(0, 8).join('；');
 }
 
@@ -384,31 +397,213 @@ function fileStatusText(result) {
     ? `程序识别到经营异常 ${summary.anomalyCount} 个`
     : '经营异常将在问诊中结合经营背景继续判断';
   if (result.document?.structured) {
-    return `已读取 ${type}：${summary.sheetCount || 0} 个表，${summary.rowCount || 0} 行数据；数据质量问题 ${summary.errorCount || 0} 个；${businessAnomalyText}。资料已加入本次问诊。`;
+    return `已读取 ${type}：${summary.sheetCount || 0} 个表，${summary.rowCount || 0} 行数据；${businessAnomalyText}。资料已加入本次问诊。`;
   }
-  const confidence = typeof summary.confidence === 'number' ? `，识别置信度 ${Math.round(summary.confidence * 100)}%` : '';
+  const confidence = typeof summary.confidence === 'number' ? `，图片识别 ${Math.round(summary.confidence * 100)}%` : '';
   return `已读取 ${type}：提取 ${summary.textLength || 0} 个字符${confidence}；${businessAnomalyText}。资料已加入本次问诊。`;
 }
 
 function imageReviewStatusText(result) {
   const summary = result.summary || {};
-  const confidence = typeof summary.confidence === 'number' ? `，识别置信度 ${Math.round(summary.confidence * 100)}%` : '';
-  return `已读取图片：提取 ${summary.textLength || 0} 个字符${confidence}；请先确认识别内容，再加入本次问诊。`;
+  const confidence = typeof summary.confidence === 'number' ? `，图片识别 ${Math.round(summary.confidence * 100)}%` : '';
+  return `资料已读取${confidence}。请先看下面需要处理的地方，确认后再用于经营诊断。`;
+}
+
+function displayValue(label, value) {
+  if (value === undefined || value === null || value === '') return '—';
+  if (typeof value !== 'number' || !Number.isFinite(value)) return String(value);
+  const formatted = value.toLocaleString('zh-CN', { maximumFractionDigits:2 });
+  if (/率/.test(label)) return `${formatted}%`;
+  if (/营业额|收入|销售额|成本|毛利|利润|金额|客单价|房租|租金|工资|人工/.test(label)) return `${formatted} 元`;
+  return formatted;
+}
+
+function summaryItem(value, label) {
+  const node = document.createElement('div');
+  node.className = 'review-summary-item';
+  const strong = document.createElement('strong');
+  strong.textContent = value;
+  const span = document.createElement('span');
+  span.textContent = label;
+  node.append(strong, span);
+  return node;
+}
+
+function plainAuditIssues(result) {
+  const issues = [];
+  for (const issue of result.audit?.errors || []) {
+    if (issue.type === 'cross_sheet_mismatch' || issue.type === 'cross_sheet_total_mismatch') continue;
+    if (issue.type === 'missing_value') {
+      issues.push({ text:`${issue.field || '关键字段'}可能漏填`, context:`${issue.sheet || '表格'}${issue.row ? `第 ${issue.row} 行` : ''}，请确认是否需要补充。` });
+    } else if (issue.type === 'duplicate' || issue.type === 'duplicate_record') {
+      issues.push({ text:'发现可能重复的数据', context:`${issue.sheet || '表格'}${issue.row ? `第 ${issue.row} 行` : ''}${issue.duplicateOf ? `与第 ${issue.duplicateOf} 行内容相同` : ''}，请确认是否重复录入。` });
+    } else {
+      issues.push({ text:'发现一处数据需要确认', context:issue.reason || [issue.sheet, issue.field].filter(Boolean).join(' / ') || '请核对原资料。' });
+    }
+  }
+  return issues;
+}
+
+function renderIssueCard(issue, { badge = '需要确认' } = {}) {
+  const card = document.createElement('article');
+  card.className = 'review-issue-card';
+  const head = document.createElement('div');
+  head.className = 'review-card-title';
+  const title = document.createElement('strong');
+  title.textContent = issue.text || issue.label || '需要确认';
+  const badgeNode = document.createElement('span');
+  badgeNode.className = 'review-card-badge';
+  badgeNode.textContent = badge;
+  head.append(title, badgeNode);
+  card.append(head);
+  if (issue.explanation) {
+    const copy = document.createElement('p');
+    copy.className = 'review-card-copy';
+    copy.textContent = issue.explanation;
+    card.append(copy);
+  }
+  if (issue.context) {
+    const context = document.createElement('div');
+    context.className = 'review-context';
+    context.textContent = `所在内容：${issue.context}`;
+    card.append(context);
+  }
+  if (typeof issue.confidence === 'number') {
+    const confidence = document.createElement('div');
+    confidence.className = 'review-context';
+    confidence.textContent = `这个位置识别可信度约 ${Math.round(issue.confidence * 100)}%`;
+    card.append(confidence);
+  }
+  return card;
+}
+
+function renderCorrectionCard(correction, index) {
+  const card = document.createElement('article');
+  card.className = 'review-correction-card';
+  card.dataset.correctionIndex = String(index);
+
+  const head = document.createElement('div');
+  head.className = 'review-card-title';
+  const title = document.createElement('strong');
+  title.textContent = correction.label || '计算结果';
+  const badge = document.createElement('span');
+  badge.className = 'review-card-badge';
+  badge.textContent = '可以确定';
+  head.append(title, badge);
+
+  const values = document.createElement('div');
+  values.className = 'review-values';
+  const original = document.createElement('div');
+  original.className = 'review-value';
+  const originalLabel = document.createElement('span');
+  originalLabel.textContent = '原数据';
+  const originalValue = document.createElement('strong');
+  originalValue.textContent = displayValue(correction.label, correction.originalValue);
+  original.append(originalLabel, originalValue);
+
+  const corrected = document.createElement('div');
+  corrected.className = 'review-value review-correct-value';
+  const correctedLabel = document.createElement('span');
+  correctedLabel.textContent = '正确结果';
+  const correctedValue = document.createElement('strong');
+  correctedValue.textContent = displayValue(correction.label, correction.correctedValue);
+  corrected.append(correctedLabel, correctedValue);
+  values.append(original, corrected);
+
+  const copy = document.createElement('p');
+  copy.className = 'review-card-copy';
+  copy.textContent = correction.explanation || '根据资料中的明确数字重新计算得到。';
+
+  const actions = document.createElement('div');
+  actions.className = 'review-correction-actions';
+  for (const [choice, text] of [['accept','采用正确值'],['keep','保留原数据']]) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.correctionChoice = choice;
+    button.dataset.correctionIndex = String(index);
+    button.textContent = text;
+    actions.append(button);
+  }
+
+  card.append(head, values, copy, actions);
+  return card;
+}
+
+function updateReviewConfirmState() {
+  const pending = state.pendingFileReview;
+  if (!pending) return;
+  const proven = (pending.result.corrections || []).filter((item) => item.kind === 'calculation_error');
+  const decided = proven.filter((_, index) => pending.correctionDecisions[index]).length;
+  if (!pending.reviewModel.hasText && pending.result.document?.type === 'image') {
+    $('confirm-file').disabled = true;
+    $('file-review-warning').textContent = '没有识别到可用文字，请重新上传更清晰的图片。';
+    return;
+  }
+  if (decided < proven.length) {
+    $('confirm-file').disabled = true;
+    $('file-review-warning').textContent = `还有 ${proven.length - decided} 个计算错误，请先选择“采用正确值”或“保留原数据”。`;
+    return;
+  }
+  $('confirm-file').disabled = false;
+  $('file-review-warning').textContent = pending.result.document?.type === 'image' && (pending.reviewModel.confidence ?? 1) < 0.7
+    ? '识别结果可能存在误差，请先确认识别内容。确认后，这份资料才会用于经营诊断。'
+    : '请先确认识别内容。确认后，这份资料才会用于经营诊断。';
 }
 
 function renderFileReview(file, contentBase64, result) {
-  state.pendingFileReview = { file, contentBase64, result };
-  const confidence = result.summary?.confidence;
-  $('file-review-confidence').textContent = typeof confidence === 'number'
-    ? `置信度 ${Math.round(confidence * 100)}%`
-    : '待人工确认';
-  $('file-review-warning').textContent = typeof confidence === 'number' && confidence < 0.7
-    ? '识别结果可能存在误差，请先核对关键数字。确认前，这张图片不会进入经营诊断。'
-    : '请先确认识别内容，尤其是营业额、成本、订单量等关键数字。确认前，这张图片不会进入经营诊断。';
-  $('file-review-text').textContent = String(result.document?.text || '').trim() || '没有提取到可展示的文字，请重新上传更清晰的图片。';
+  const reviewModel = buildFileReviewModel(result);
+  state.pendingFileReview = { file, contentBase64, result, reviewModel, correctionDecisions:{} };
+  const corrections = Array.isArray(result.corrections) ? result.corrections : [];
+  const provenCorrections = corrections.filter((item) => item.kind === 'calculation_error');
+  const correctionQuestions = corrections.filter((item) => item.kind !== 'calculation_error').map((item) => ({
+    text:item.label || '数据需要确认',
+    explanation:item.explanation,
+    context:Array.isArray(item.evidence) ? item.evidence.join('；') : ''
+  }));
+  const auditIssues = plainAuditIssues(result);
+  const ocrImportant = reviewModel.importantIssues;
+  const mainIssues = [...correctionQuestions, ...auditIssues, ...ocrImportant].slice(0, 5);
+  const overflowMain = [...correctionQuestions, ...auditIssues, ...ocrImportant].slice(5);
+  const otherIssues = [...overflowMain, ...reviewModel.otherIssues];
+
+  $('file-review-confidence').textContent = result.document?.type === 'image' && typeof reviewModel.confidence === 'number'
+    ? `图片识别 ${Math.round(reviewModel.confidence * 100)}%`
+    : '资料已读取';
+
+  const summary = $('file-review-summary');
+  summary.replaceChildren();
+  if (result.document?.structured) summary.append(summaryItem(`${result.summary?.rowCount || 0} 行`, '已读取数据'));
+  else summary.append(summaryItem(`${result.summary?.textLength || 0} 字`, '已读取内容'));
+  summary.append(summaryItem(`${provenCorrections.length} 个`, '确定的计算错误'));
+  summary.append(summaryItem(`${mainIssues.length + otherIssues.length} 处`, '需要人工确认'));
+  if (result.document?.type === 'image' && typeof reviewModel.confidence === 'number') {
+    summary.append(summaryItem(`${Math.round(reviewModel.confidence * 100)}%`, '图片整体识别质量'));
+  }
+
+  const correctionsList = $('file-review-corrections-list');
+  correctionsList.replaceChildren();
+  provenCorrections.forEach((correction, index) => correctionsList.append(renderCorrectionCard(correction, index)));
+  $('file-review-corrections').hidden = provenCorrections.length === 0;
+
+  const importantList = $('file-review-important-list');
+  importantList.replaceChildren();
+  mainIssues.forEach((issue) => importantList.append(renderIssueCard(issue)));
+  $('file-review-important').hidden = mainIssues.length === 0;
+
+  const otherList = $('file-review-other-list');
+  otherList.replaceChildren();
+  otherIssues.forEach((issue) => otherList.append(renderIssueCard(issue, { badge:'次要' })));
+  $('file-review-other-count').textContent = otherIssues.length ? `(${otherIssues.length} 处)` : '';
+  $('file-review-other').hidden = otherIssues.length === 0;
+  $('file-review-other').open = false;
+
+  $('file-review-text').textContent = reviewModel.fullText || '没有提取到可展示的文字。';
+  $('file-review-fulltext').hidden = !reviewModel.hasText;
+  $('file-review-fulltext').open = false;
   $('file-review').hidden = false;
+  $('file-errors').textContent = '';
   $('file-status').textContent = imageReviewStatusText(result);
-  $('file-errors').textContent = summarizeFileIssues(result);
+  updateReviewConfirmState();
 }
 
 function resetUploadedFileState() {
@@ -417,7 +612,11 @@ function resetUploadedFileState() {
   state.audit = null;
   clearPendingFileReview();
   state.diagnosis.documents = [];
-  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && item.startsWith('file_analysis:')));
+  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && (
+    item.startsWith('file_analysis:') ||
+    item.startsWith('correction_decision:') ||
+    item.startsWith('file_review:')
+  )));
   updateDownloadState();
 }
 
@@ -531,7 +730,34 @@ async function postFileAnalysisStream(file, contentBase64, { signal, onProgress 
   return readAnalysisStream(response, onProgress);
 }
 
-function commitSuccessfulFileAnalysis(file, contentBase64, result) {
+function correctionDecisionEvidence(pending) {
+  const corrections = (pending?.result?.corrections || []).filter((item) => item.kind === 'calculation_error');
+  return corrections.map((correction, index) => {
+    const choice = pending.correctionDecisions[index];
+    const decision = choice === 'accept' ? 'accepted' : 'kept_original';
+    return `correction_decision:${JSON.stringify({
+      label:correction.label,
+      originalValue:correction.originalValue,
+      correctedValue:correction.correctedValue,
+      decision,
+      explanation:correction.explanation || ''
+    })}`;
+  });
+}
+
+function unresolvedReviewEvidence(result) {
+  return (result?.corrections || [])
+    .filter((item) => item.kind !== 'calculation_error')
+    .map((item) => `file_review:${JSON.stringify({
+      kind:item.kind,
+      label:item.label,
+      originalValue:item.originalValue,
+      explanation:item.explanation || '',
+      evidence:Array.isArray(item.evidence) ? item.evidence : []
+    })}`);
+}
+
+function commitSuccessfulFileAnalysis(file, contentBase64, result, reviewEvidence = []) {
   if (result.document.type === 'excel') {
     state.originalFile = file;
     state.originalBase64 = contentBase64;
@@ -542,16 +768,28 @@ function commitSuccessfulFileAnalysis(file, contentBase64, result) {
 
   state.audit = result.audit;
   state.diagnosis.documents = [result.document];
-  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && item.startsWith('file_analysis:')));
-  state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`);
+  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && (
+    item.startsWith('file_analysis:') ||
+    item.startsWith('correction_decision:') ||
+    item.startsWith('file_review:')
+  )));
+  state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`, ...reviewEvidence);
   $('file-status').textContent = fileStatusText(result);
-  $('file-errors').textContent = summarizeFileIssues(result);
+  $('file-errors').textContent = '';
   updateDownloadState();
   saveSession();
 }
 
+function requiresFileReview(result) {
+  return Boolean((result.corrections || []).length || (result.audit?.errors || []).length);
+}
+
 function applySuccessfulFileAnalysis(file, contentBase64, result) {
   if (result.document?.type === 'image') {
+    renderFileReview(file, contentBase64, result);
+    return;
+  }
+  if (requiresFileReview(result)) {
     renderFileReview(file, contentBase64, result);
     return;
   }
@@ -561,20 +799,34 @@ function applySuccessfulFileAnalysis(file, contentBase64, result) {
 
 function confirmPendingFileReview() {
   const pending = state.pendingFileReview;
-  if (!pending) return;
+  if (!pending || $('confirm-file').disabled) return;
+  const reviewEvidence = [
+    ...correctionDecisionEvidence(pending),
+    ...unresolvedReviewEvidence(pending.result)
+  ];
   state.pendingFileReview = null;
   hideFileReview();
-  commitSuccessfulFileAnalysis(pending.file, pending.contentBase64, pending.result);
-  $('file-status').textContent = `${fileStatusText(pending.result)} 已确认识别内容。`;
+  commitSuccessfulFileAnalysis(pending.file, pending.contentBase64, pending.result, reviewEvidence);
+  $('file-status').textContent = `${fileStatusText(pending.result)} 已确认资料检查结果。`;
 }
 
 function replacePendingFileReview() {
   if (!state.pendingFileReview) return;
   clearPendingFileReview();
-  $('file-status').textContent = '未使用刚才的图片识别结果，请重新选择经营资料。';
+  $('file-status').textContent = '未使用刚才的资料，请重新选择经营资料。';
   $('file-errors').textContent = '';
   $('workbook').value = '';
   $('workbook').click();
+}
+
+function chooseCorrection(index, choice) {
+  const pending = state.pendingFileReview;
+  if (!pending) return;
+  pending.correctionDecisions[index] = choice;
+  for (const button of document.querySelectorAll(`[data-correction-index="${index}"]`)) {
+    button.classList.toggle('selected', button.dataset.correctionChoice === choice);
+  }
+  updateReviewConfirmState();
 }
 
 async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
@@ -626,7 +878,7 @@ async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
     state.pendingFile = null;
     state.fileResumeAfterBackground = false;
     state.fileBackgroundRetryCount = 0;
-    setFileProgress(100, result.document?.type === 'image' ? '识别完成，等待确认' : '分析完成');
+    setFileProgress(100, (result.document?.type === 'image' || requiresFileReview(result)) ? '资料检查完成，等待确认' : '分析完成');
     setFileProgressActions({ analyzing:false, retry:false });
   } catch (error) {
     if (state.diagnosis.id !== capturedDiagnosisId) return;
@@ -727,6 +979,13 @@ $('retry-file').addEventListener('click', () => {
   state.fileResumeAfterBackground = false;
   state.fileBackgroundRetryCount = 0;
   retryPendingFile();
+});
+$('file-review-corrections').addEventListener('click', (event) => {
+  const button = event.target.closest?.('[data-correction-choice]');
+  if (!button) return;
+  const index = Number(button.dataset.correctionIndex);
+  if (!Number.isInteger(index)) return;
+  chooseCorrection(index, button.dataset.correctionChoice);
 });
 $('confirm-file').addEventListener('click', confirmPendingFileReview);
 $('replace-file').addEventListener('click', replacePendingFileReview);
