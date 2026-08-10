@@ -32,7 +32,7 @@
 
     <section class="card">
       <div class="section-head"><div><span class="eyebrow">经营资料</span><h2>上传经营资料（可选）</h2></div><span class="optional">选填</span></div>
-      <p class="muted">支持 Excel、CSV、PDF、Word 和 JPG/PNG 图片。系统会先检查资料，再把确定的计算错误、需要确认的内容和经营问题分开。</p>
+      <p class="muted">支持 Excel、CSV、PDF、Word 和 JPG/PNG 图片。报表图片会先读取表格结构，再复算能证明的公式，并把“确定错误”和“需要核对”分开。</p>
       <p class="muted small">原文件不会写入本地草稿；分析时会将提取出的必要经营内容用于诊断。请勿上传身份证、银行卡等与经营无关的敏感资料。</p>
       <input id="workbook" type="file" accept=".xlsx,.xls,.csv,.pdf,.docx,.jpg,.jpeg,.png,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png">
       <p class="muted small">可上传：.xlsx / .xls / .csv / .pdf / .docx / .jpg / .jpeg / .png</p>
@@ -58,26 +58,27 @@
       <div id="file-review" class="file-review" hidden>
         <div class="file-review-head">
           <div>
-            <span class="eyebrow">资料检查</span>
-            <h3>资料检查完成</h3>
+            <span class="eyebrow">报表检查</span>
+            <h3>报表检查完成</h3>
           </div>
           <span id="file-review-confidence" class="review-confidence"></span>
         </div>
 
+        <div id="file-review-lead" class="report-review-lead" aria-live="polite"></div>
         <div id="file-review-summary" class="review-summary" aria-live="polite"></div>
 
         <section id="file-review-corrections" class="review-section" hidden>
           <div class="review-section-head">
-            <h4>发现计算错误</h4>
-            <span class="review-section-note">系统能算清楚的，直接给你正确结果</span>
+            <h4>具体问题</h4>
+            <span class="review-section-note">能证明的才给正确结果；不能证明的只提醒核对</span>
           </div>
           <div id="file-review-corrections-list" class="review-list"></div>
         </section>
 
         <section id="file-review-important" class="review-section" hidden>
           <div class="review-section-head">
-            <h4>需要你确认</h4>
-            <span class="review-section-note">看不清或无法证明的地方，不会乱改</span>
+            <h4>关键数据需要核对</h4>
+            <span class="review-section-note">只有会影响结论的关键数据才放这里</span>
           </div>
           <div id="file-review-important-list" class="review-list"></div>
         </section>
@@ -85,12 +86,12 @@
         <p id="file-review-warning" class="review-warning"></p>
 
         <details id="file-review-other" class="review-details">
-          <summary>其他疑似识别问题 <span id="file-review-other-count"></span></summary>
+          <summary>其他资料问题 <span id="file-review-other-count"></span></summary>
           <div id="file-review-other-list" class="review-list compact"></div>
         </details>
 
         <details id="file-review-fulltext" class="review-details">
-          <summary>查看完整识别文字</summary>
+          <summary>识别技术详情</summary>
           <div id="file-review-text" class="file-review-text" role="region" aria-label="图片识别内容"></div>
         </details>
 
