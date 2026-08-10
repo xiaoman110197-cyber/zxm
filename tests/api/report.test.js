@@ -44,6 +44,20 @@ test('report api rejects decoded source workbooks above 3 MB', async () => {
   assert.match(res.body.error, /3\s*MB|过大/);
 });
 
+test('report api rejects abusive analysis arrays before workbook generation', async () => {
+  const handleReportRequest = await loadHandler();
+  const res = mockRes();
+  const findings = Array.from({ length:101 }, (_, index) => ({
+    title:`问题${index + 1}`, status:'hypothesis', priority:'P2', evidence:['测试'], confidence:0.2,
+    impact:'待验证', action:'验证', metric:'指标'
+  }));
+  await handleReportRequest({ method:'POST', body:{
+    file:{ name:'test.xlsx', contentBase64:sourceBase64() }, audit:{ errors:[], anomalies:[], metrics:{} }, findings
+  } }, res);
+  assert.equal(res.statusCode, 413);
+  assert.match(res.body.error, /过多|上限|报告/);
+});
+
 test('report api returns a real xlsx preserving original sheets and adding analysis sheets', async () => {
   const handleReportRequest = await loadHandler();
   const res = mockRes();
