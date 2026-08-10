@@ -117,6 +117,11 @@ function applyBurstGuard(req, res, requestId, deps) {
   return jsonError(res, 429, '文件分析请求较频繁，请稍后再试', requestId);
 }
 
+function safeProgressStage(value) {
+  const stage = String(value || '');
+  return /^[a-z0-9_-]{1,40}$/i.test(stage) ? stage : '-';
+}
+
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   const requestId = deps.requestId || randomUUID();
   const startedAt = Date.now();
@@ -146,13 +151,16 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   const streamMode = isStreamRequest(req);
   const emitProgress = (event) => writeSse(res, 'progress', { requestId, ...event });
   let lastLoggedPhase = '';
+  let lastLoggedStage = '';
   let lastLoggedPercent = -Infinity;
   const observeProgress = (event = {}) => {
     const phase = String(event.phase || 'unknown');
+    const stage = safeProgressStage(event.stage);
     const percent = Math.max(0, Math.min(100, Math.round(Number(event.percent) || 0)));
-    if (phase !== lastLoggedPhase || percent >= lastLoggedPercent + 5 || percent === 100) {
-      logInfo('[analyze-file]', requestId, 'progress', phase, percent, Date.now() - startedAt);
+    if (phase !== lastLoggedPhase || stage !== lastLoggedStage || percent >= lastLoggedPercent + 5 || percent === 100) {
+      logInfo('[analyze-file]', requestId, 'progress', phase, stage, percent, Date.now() - startedAt);
       lastLoggedPhase = phase;
+      lastLoggedStage = stage;
       lastLoggedPercent = percent;
     }
     deps.onProgress?.(event);
