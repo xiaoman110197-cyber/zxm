@@ -27,6 +27,24 @@ test('report api rejects requests without original workbook', async () => {
   assert.match(res.body.error, /file|workbook|Excel/i);
 });
 
+test('report api rejects source workbooks above the 3 MB raw-file limit', async () => {
+  const handleReportRequest = await loadHandler();
+  const res = mockRes();
+  const contentBase64 = Buffer.alloc(3 * 1024 * 1024 + 1, 0x61).toString('base64');
+  await handleReportRequest({ method:'POST', body:{ file:{ name:'huge.xlsx', contentBase64 }, audit:{ errors:[], anomalies:[], metrics:{} }, findings:[] } }, res);
+  assert.equal(res.statusCode, 413);
+  assert.match(res.body.error, /3\s*MB|过大/);
+});
+
+test('report api rejects pathological findings counts before workbook generation', async () => {
+  const handleReportRequest = await loadHandler();
+  const res = mockRes();
+  const findings = Array.from({ length:51 }, (_, i) => ({ title:`问题${i}`, status:'hypothesis', priority:'P2', evidence:['x'], confidence:0.2, impact:'x', action:'x', metric:'x' }));
+  await handleReportRequest({ method:'POST', body:{ file:{ name:'test.xlsx', contentBase64:sourceBase64() }, audit:{ errors:[], anomalies:[], metrics:{} }, findings } }, res);
+  assert.equal(res.statusCode, 413);
+  assert.match(res.body.error, /过多|精简|限制/);
+});
+
 test('report api returns a real xlsx preserving original sheets and adding analysis sheets', async () => {
   const handleReportRequest = await loadHandler();
   const res = mockRes();
