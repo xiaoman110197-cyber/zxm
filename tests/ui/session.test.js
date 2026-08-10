@@ -8,7 +8,7 @@ test('session snapshot keeps text diagnosis state but never file content', () =>
       id:'d1',
       answers:{ owner_turn_1:'利润下降' },
       evidence:['file_analysis:{"secret":true}'],
-      findings:[{ title:'利润下降', status:'hypothesis', priority:'P2', evidence:['老板反馈'], confidence:0.4, impact:'利润承压', action:'核对成本', metric:'毛利率' }],
+      findings:[{ title:'利润下降', status:'hypothesis', priority:'P2', evidence:['老板反馈'], confidence:0.4, impact:'利润承压', action:'核对成本', metric:'毛利率', hiddenRawText:'OCR_SECRET_EXTRA_FIELD' }],
       documents:[{ name:'账单.png', type:'image', text:'营业额 123456' }],
       dialogue:[{ who:'owner', text:'利润下降' }, { who:'ai', text:'最近成本变化多少？', reason:'拆解利润问题' }]
     },
@@ -23,7 +23,8 @@ test('session snapshot keeps text diagnosis state but never file content', () =>
   assert.equal(snapshot.diagnosis.documents, undefined);
   assert.equal(snapshot.diagnosis.evidence, undefined);
   assert.equal(snapshot.originalBase64, undefined);
-  assert.doesNotMatch(JSON.stringify(snapshot), /123456|TOP_SECRET_BASE64|file_analysis/);
+  assert.equal(snapshot.diagnosis.findings[0].hiddenRawText, undefined);
+  assert.doesNotMatch(JSON.stringify(snapshot), /123456|TOP_SECRET_BASE64|file_analysis|OCR_SECRET/);
 });
 
 test('restores a fresh snapshot and rejects an expired one', () => {
