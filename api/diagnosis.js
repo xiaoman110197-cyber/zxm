@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createDeepSeekProvider, createOpenAIProvider } from '../src/ai/providers.js';
 import { crossReviewDiagnosis } from '../src/ai/cross-review.js';
+import { boundDiagnosisContext } from '../src/ai/context.js';
 
 const FINDING_STATUSES = new Set(['confirmed', 'probable', 'hypothesis']);
 const PRIORITIES = new Set(['P0', 'P1', 'P2']);
@@ -187,6 +188,7 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
   const diagnosis = req.body?.diagnosis;
   if (!diagnosis || typeof diagnosis !== 'object' || !diagnosis.id) return jsonError(res, 400, 'diagnosis is required', requestId);
+  const providerDiagnosis = boundDiagnosisContext(diagnosis);
 
   // Legacy injection path retained for existing tests and isolated mocking.
   if ('ai' in deps || 'apiKey' in deps) {
@@ -194,7 +196,7 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
     if (!apiKey) return jsonError(res, 503, 'Server is missing OPENAI_API_KEY', requestId);
     try {
       const ai = deps.ai || ((value) => callOpenAiDiagnosis(value, { apiKey }));
-      const result = validateAiResult(normalizeAiResult(await ai(diagnosis)));
+      const result = validateAiResult(normalizeAiResult(await ai(providerDiagnosis)));
       return res.status(200).json({ ...result, requestId });
     } catch (error) {
       logDiagnosisError('legacy-provider', error, requestId, startedAt);
@@ -211,7 +213,7 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
   }
 
   try {
-    const diagnosed = await diagnoseWithFallback(diagnosis, { primaryProvider, fallbackProvider, requestId, startedAt });
+    const diagnosed = await diagnoseWithFallback(providerDiagnosis, { primaryProvider, fallbackProvider, requestId, startedAt });
     let result = diagnosed.result;
 
     if (result.mode === 'finding') {
