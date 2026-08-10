@@ -32,6 +32,16 @@ test('preserves source sheets and adds all analysis sheets', () => {
   assert.deepEqual(after, before, 'source workbook must not be mutated');
 });
 
+test('summary calls anomalies program-detected instead of implying none exist', () => {
+  const out = buildReportWorkbook({
+    workbook: sourceWorkbook(), audit:{ errors:[], anomalies:[], metrics:{} }, findings:[]
+  });
+  const result = XLSX.read(out, { type:'buffer' });
+  const rows = XLSX.utils.sheet_to_json(result.Sheets['诊断总览'], { defval:'' });
+  assert.equal(rows[0].程序识别异常数, 0);
+  assert.equal(Object.hasOwn(rows[0], '经营异常数'), false);
+});
+
 test('marks uncertain corrections as 待确认 and records correction provenance', () => {
   const out = buildReportWorkbook({
     workbook: sourceWorkbook(),
