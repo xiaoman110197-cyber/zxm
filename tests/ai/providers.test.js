@@ -33,6 +33,32 @@ test('diagnosis prompt treats merchant-accepted deterministic corrections as the
   assert.match(systemPrompt, /优先|采用/);
 });
 
+test('diagnosis prompt distinguishes trusted report facts, proven corrections, anomalies and unresolved confirmations', async () => {
+  let systemPrompt = '';
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    systemPrompt = body.messages[0].content;
+    return { ok:true, json:async () => ({ choices:[{ message:{ content:'{"mode":"question","question":{"key":"next","question":"下一步？","reason":"继续核实"},"findings":[]}' } }] }) };
+  };
+  const provider = createDeepSeekProvider({ apiKey:'k', fetchImpl });
+  await provider.diagnose({
+    id:'d1',
+    evidence:[
+      'report_fact:{"scope":"华南大区","metric":"营收","value":9800,"unit":"万元","trusted":true}',
+      'report_issue:{"kind":"calculation_error","title":"毛利率计算错误","scope":"华南大区","originalValue":85,"correctedValue":37.76,"source":"program"}',
+      'report_review_confirmation:{"scope":"华南大区","metric":"成本","value":6100,"trusted":false}'
+    ]
+  });
+  assert.match(systemPrompt, /report_fact/);
+  assert.match(systemPrompt, /trusted=true|trusted.*true/);
+  assert.match(systemPrompt, /report_issue/);
+  assert.match(systemPrompt, /source=program|source.*program/);
+  assert.match(systemPrompt, /correctedValue/);
+  assert.match(systemPrompt, /report_review_confirmation/);
+  assert.match(systemPrompt, /不得.*确定事实|不能.*确定事实/);
+  assert.match(systemPrompt, /anomaly|异常/);
+});
+
 test('deepseek provider can use v4 pro for review', async () => {
   let model;
   const fetchImpl = async (_url, init) => {
