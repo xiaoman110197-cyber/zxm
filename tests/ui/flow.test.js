@@ -134,3 +134,22 @@ test('layout is mobile-first and avoids fixed desktop width', () => {
   assert.match(css, /@media/);
   assert.doesNotMatch(css, /width:\s*1[2-9]\d{2}px/);
 });
+
+test('file analysis uses ordinary JSON POST instead of SSE streaming', () => {
+  assert.match(js, /fetch\(['"]\/api\/analyze-file['"]/);
+  assert.doesNotMatch(js, /\/api\/analyze-file\?stream=1/);
+
+  const start = js.indexOf('async function analyzeBusinessFile');
+  const end = js.indexOf('\nfunction ', start + 10);
+  const functionText = js.slice(start, end > start ? end : undefined);
+  assert.doesNotMatch(functionText, /getReader\(/);
+});
+
+test('file analysis copy tells mobile users to keep the page open', () => {
+  assert.match(js, /正在分析报表，请保持页面打开/);
+});
+
+test('browser-level file transport failures have a stable safe classification', () => {
+  assert.match(js, /FILE_TRANSPORT_FAILED/);
+  assert.match(js, /分析请求没有正常连接到服务器/);
+});
