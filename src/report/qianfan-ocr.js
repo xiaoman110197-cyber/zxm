@@ -16,6 +16,9 @@ const SAFE_PROVIDER_ERROR_CODES = new Set([
   'coding_plan_rate_limit_exceeded',
   'coding_plan_cluster_rate_limited'
 ]);
+const SAFE_TOP_LEVEL_NUMERIC_CODES = new Map([
+  ['216003', 'AUTH_216003']
+]);
 
 function safeFailure(code, { model, logWarn }) {
   if (typeof logWarn === 'function') logWarn('[qianfan-ocr]', code, `model=${model}`);
@@ -30,9 +33,21 @@ function safeFailure(code, { model, logWarn }) {
 }
 
 function safeProviderErrorCode(status, payload) {
-  const raw = String(payload?.code || '').trim().toLowerCase();
-  if (!SAFE_PROVIDER_ERROR_CODES.has(raw)) return `OCR_HTTP_${status || 'UNKNOWN'}`;
-  return `OCR_HTTP_${status || 'UNKNOWN'}_${raw.toUpperCase()}`;
+  const nestedRaw = String(payload?.error?.code || '').trim().toLowerCase();
+  if (SAFE_PROVIDER_ERROR_CODES.has(nestedRaw)) {
+    return `OCR_HTTP_${status || 'UNKNOWN'}_${nestedRaw.toUpperCase()}`;
+  }
+
+  const topLevelRaw = String(payload?.code || '').trim();
+  const numericAlias = SAFE_TOP_LEVEL_NUMERIC_CODES.get(topLevelRaw);
+  if (numericAlias) return `OCR_HTTP_${status || 'UNKNOWN'}_${numericAlias}`;
+
+  const topLevelNamed = topLevelRaw.toLowerCase();
+  if (SAFE_PROVIDER_ERROR_CODES.has(topLevelNamed)) {
+    return `OCR_HTTP_${status || 'UNKNOWN'}_${topLevelNamed.toUpperCase()}`;
+  }
+
+  return `OCR_HTTP_${status || 'UNKNOWN'}`;
 }
 
 async function classifyHttpFailure(response) {
