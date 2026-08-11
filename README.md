@@ -37,6 +37,8 @@ DEEPSEEK_MODEL        可选：默认 deepseek-v4-flash
 
 API Key 只能保存在服务端环境变量中，不应写入前端代码、仓库、日志或截图。
 
+每次修改报表识别主链路后，必须在 Preview 环境用同一张参考报表做真实上传测试，确认进度依次经过 `cloud-ocr → structuring → report-check → complete`，并确认结果模式为 `cloud_ocr_deepseek`。没有真实 Preview 验证时，不应仅凭单元测试宣称云端报表识别已经可用。
+
 ## 当前支持
 
 - Excel / CSV 的确定性数据检查
