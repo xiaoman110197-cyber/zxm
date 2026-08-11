@@ -1,6 +1,6 @@
 # DeepSeek OCR Pipeline Implementation Plan
 
-> **Status (2026-08-11):** Tasks 1–6 and Task 7 code/CI verification are complete on `feature/deepseek-ocr-pipeline`. Real Preview upload verification remains blocked on the Preview environment having valid `QIANFAN_API_KEY` and `DEEPSEEK_API_KEY` values. Do not merge until the same reference screenshot is successfully tested in Preview.
+> **Status (2026-08-11):** Tasks 1–6 and Task 7 code/CI verification are complete on `feature/deepseek-ocr-pipeline`. Preview `QIANFAN_API_KEY` and `DEEPSEEK_API_KEY` are now confirmed configured in Vercel; a fresh Preview deployment is required before same-image verification. Do not merge until the same reference screenshot is successfully tested in Preview.
 
 ## Target architecture
 
@@ -101,7 +101,7 @@ Secrets must stay server-side and must never appear in commits, browser code, sc
 - [x] Negative truth assertion: any issue that is not a program calculation error has no `correctedValue`
 - [x] Full GitHub Actions test suite passes
 - [x] Production bundle build passes
-- [ ] Configure/confirm Preview `QIANFAN_API_KEY`, `DEEPSEEK_API_KEY`
+- [x] Configure/confirm Preview `QIANFAN_API_KEY`, `DEEPSEEK_API_KEY`
 - [ ] Upload the same reference screenshot in Preview
 - [ ] Verify `cloud-ocr -> structuring -> report-check -> complete`
 - [ ] Verify mode `cloud_ocr_deepseek`
