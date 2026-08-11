@@ -730,67 +730,6 @@ function setFileProgressActions({ analyzing = false, retry = false } = {}) {
   $('retry-file').hidden = !retry;
 }
 
-function parseSseBlock(block) {
-  const lines = block.split(/\r?\n/);
-  let event = 'message';
-  const dataLines = [];
-  for (const line of lines) {
-    if (line.startsWith('event:')) event = line.slice(6).trim();
-    if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart());
-  }
-  if (!dataLines.length) return null;
-  return { event, data:JSON.parse(dataLines.join('\n')) };
-}
-
-function handleAnalysisStreamEvent(parsed, onProgress) {
-  if (!parsed) return null;
-  if (parsed.event === 'progress') { onProgress(parsed.data); return null; }
-  if (parsed.event === 'result') return parsed.data;
-  if (parsed.event === 'error') {
-    const error = new Error(parsed.data?.error || '文件分析失败');
-    if (parsed.data?.requestId) error.requestId = parsed.data.requestId;
-    throw error;
-  }
-  return null;
-}
-
-async function readAnalysisStream(response, onProgress) {
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const error = new Error(data.error || `文件分析请求失败 (${response.status})`);
-    error.requestId = data.requestId || '';
-    error.status = response.status;
-    throw error;
-  }
-  const contentType = response.headers.get('content-type') || '';
-  if (!contentType.includes('text/event-stream')) return response.json();
-  let finalResult = null;
-  const processBlock = (block) => {
-    if (!block.trim()) return;
-    const value = handleAnalysisStreamEvent(parseSseBlock(block), onProgress);
-    if (value) finalResult = value;
-  };
-  if (!response.body) {
-    const text = await response.text();
-    for (const block of text.split(/\r?\n\r?\n/)) processBlock(block);
-    if (finalResult) return finalResult;
-    throw new Error('分析连接提前结束，请重新分析');
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let pending = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    pending += decoder.decode(value || new Uint8Array(), { stream:!done });
-    const blocks = pending.split(/\r?\n\r?\n/);
-    pending = blocks.pop() || '';
-    for (const block of blocks) processBlock(block);
-    if (done) break;
-  }
-  if (pending.trim()) processBlock(pending);
-  if (finalResult) return finalResult;
-  throw new Error('分析连接提前结束，请重新分析');
-}
 
 async function postFileAnalysis(file, contentBase64, { signal } = {}) {
   let response;

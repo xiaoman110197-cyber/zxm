@@ -149,3 +149,10 @@ test('browser-level file transport failures have a stable safe classification', 
   assert.match(js, /FILE_TRANSPORT_FAILED/);
   assert.match(js, /分析请求没有正常连接到服务器/);
 });
+
+
+test('browser bundle no longer contains file-analysis SSE parser helpers', () => {
+  assert.doesNotMatch(js, /function parseSseBlock/);
+  assert.doesNotMatch(js, /function readAnalysisStream/);
+  assert.doesNotMatch(js, /postFileAnalysisStream/);
+});
