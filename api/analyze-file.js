@@ -5,7 +5,6 @@ import { createDeepSeekProvider } from '../src/ai/providers.js';
 import { parseBusinessDocument, supportedBusinessDocumentExtensions } from '../src/documents/parse.js';
 import { decodeBase64Strict } from '../src/http/base64.js';
 import { checkBurstLimit, requestClientKey } from '../src/http/guard.js';
-import { analyzeReportImage } from '../src/report/vision.js';
 import { recognizeReportImage } from '../src/report/qianfan-ocr.js';
 import { structureReportText } from '../src/report/structure.js';
 import { buildReportFacts } from '../src/report/facts.js';
@@ -18,18 +17,18 @@ const MAX_CONTEXT_ISSUES = 10;
 function normalizeAudit(audit) {
   return {
     ...audit,
-    errors: audit.errors.map((error) => {
-      if (error.type === 'duplicate_record') return { ...error, type: 'duplicate' };
+    errors:audit.errors.map((error) => {
+      if (error.type === 'duplicate_record') return { ...error, type:'duplicate' };
       if (error.type === 'cross_sheet_total_mismatch') {
         return {
           ...error,
-          type: 'cross_sheet_mismatch',
-          sheet: error.summarySheet,
-          field: error.metric,
-          originalValue: error.actual,
-          suggestedValue: null,
-          reason: `${error.summarySheet}中的${error.metric}与${error.sourceSheet}合计不一致`,
-          confidence: 1
+          type:'cross_sheet_mismatch',
+          sheet:error.summarySheet,
+          field:error.metric,
+          originalValue:error.actual,
+          suggestedValue:null,
+          reason:`${error.summarySheet}中的${error.metric}与${error.sourceSheet}合计不一致`,
+          confidence:1
         };
       }
       return error;
@@ -50,7 +49,7 @@ function mimeTypeOf(extension) {
 }
 
 function emptyAudit() {
-  return { errors: [], anomalies: [], metrics: {} };
+  return { errors:[], anomalies:[], metrics:{} };
 }
 
 function countRows(workbook) {
@@ -69,12 +68,12 @@ function compactIssue(issue) {
 function attachAuditSummary(document, audit) {
   return {
     ...document,
-    auditSummary: {
-      errorCount: audit.errors.length,
-      anomalyCount: audit.anomalies.length,
-      metrics: audit.metrics,
-      topIssues: audit.errors.slice(0, MAX_CONTEXT_ISSUES).map(compactIssue),
-      topAnomalies: audit.anomalies.slice(0, MAX_CONTEXT_ISSUES).map(compactIssue)
+    auditSummary:{
+      errorCount:audit.errors.length,
+      anomalyCount:audit.anomalies.length,
+      metrics:audit.metrics,
+      topIssues:audit.errors.slice(0, MAX_CONTEXT_ISSUES).map(compactIssue),
+      topAnomalies:audit.anomalies.slice(0, MAX_CONTEXT_ISSUES).map(compactIssue)
     }
   };
 }
@@ -89,17 +88,17 @@ function buildPayload(parsed, requestId, reportData = null) {
     document,
     audit,
     corrections,
-    summary: {
-      fileType: document.type,
-      sheetCount: parsed.workbook?.sheets?.length || 0,
-      rowCount: countRows(parsed.workbook),
-      textLength: typeof document.text === 'string' ? document.text.length : 0,
-      warningCount: warnings.length,
-      errorCount: audit.errors.length,
-      anomalyCount: audit.anomalies.length,
-      correctionCount: corrections.length,
-      confidence: typeof document.confidence === 'number' ? document.confidence : null,
-      metrics: audit.metrics
+    summary:{
+      fileType:document.type,
+      sheetCount:parsed.workbook?.sheets?.length || 0,
+      rowCount:countRows(parsed.workbook),
+      textLength:typeof document.text === 'string' ? document.text.length : 0,
+      warningCount:warnings.length,
+      errorCount:audit.errors.length,
+      anomalyCount:audit.anomalies.length,
+      correctionCount:corrections.length,
+      confidence:typeof document.confidence === 'number' ? document.confidence : null,
+      metrics:audit.metrics
     }
   };
   if (reportData) {
@@ -110,9 +109,6 @@ function buildPayload(parsed, requestId, reportData = null) {
     payload.summary.reportConfirmationCount = reportData.reportReview.summary.confirmationCount;
     payload.summary.reportRecognitionMode = reportData.reportReview.summary.recognitionMode;
     payload.summary.reportCompleteReview = reportData.reportReview.summary.completeReview;
-    if (Object.prototype.hasOwnProperty.call(reportData.reportReview.summary, 'visionAvailable')) {
-      payload.summary.visionAvailable = reportData.reportReview.summary.visionAvailable;
-    }
   }
   return payload;
 }
@@ -137,44 +133,14 @@ function confirmationFactIds(confirmations, facts = []) {
   return ids;
 }
 
-function shouldUseLegacyVision(deps) {
-  return typeof deps.analyzeReportImage === 'function'
-    && typeof deps.recognizeReportImage !== 'function'
-    && typeof deps.reportStructurer !== 'function'
-    && !deps.reportStructureProvider;
-}
-
-async function analyzeImageReportLegacy({ file, buffer, parsed, extension, deps, observeProgress }) {
-  const visionAnalyzer = deps.analyzeReportImage || analyzeReportImage;
-  observeProgress({ phase:'vision', percent:90, message:'正在理解报表行列和关键数据', stage:'reading-table' });
-  const vision = await visionAnalyzer({
-    name:file.name,
-    buffer,
-    mimeType:mimeTypeOf(extension),
-    ocrText:parsed.document?.text || ''
-  }, deps.visionOptions || {});
-  observeProgress({ phase:'report-check', percent:96, message:'正在复算公式并检查数据逻辑', stage:'checking-rules' });
-  const reconciled = buildReportFacts({ visionFacts:vision.facts || [], ocrDocument:parsed.document || {} });
-  const ruleIssues = inspectReportFacts(reconciled.facts, { now:deps.now || new Date() });
-  const reportReview = buildReportReview({
-    ruleIssues,
-    visionCandidates:vision.candidates || [],
-    confirmations:reconciled.confirmations,
-    vision
-  });
-  const conflicted = confirmationFactIds(reconciled.confirmations, reconciled.facts);
-  const reportFacts = reconciled.facts.map((fact) => ({ ...fact, trusted:!conflicted.has(fact.id) }));
-  return { reportReview, reportFacts };
-}
-
 function runtimeReportStructureProvider(deps) {
   if (deps.reportStructureProvider) return deps.reportStructureProvider;
   const apiKey = process.env.DEEPSEEK_API_KEY || '';
-  if (!apiKey) return null;
+  if (!String(apiKey).trim()) return null;
   return createDeepSeekProvider({ apiKey, timeoutMs:12000 });
 }
 
-async function analyzeImageReportDeepSeek({ file, buffer, parsed, extension, deps, observeProgress }) {
+async function analyzeImageReport({ file, buffer, parsed, extension, deps, observeProgress }) {
   const recognizer = deps.recognizeReportImage || recognizeReportImage;
   observeProgress({ phase:'cloud-ocr', percent:88, message:'正在读取报表原图和表格结构', stage:'cloud-ocr' });
 
@@ -234,10 +200,7 @@ async function analyzeImageReportDeepSeek({ file, buffer, parsed, extension, dep
       warning:'未能可靠读取报表内容，请重新上传更清晰的图片。',
       failureCode:cloud?.failureCode || 'OCR_UNAVAILABLE'
     };
-    return {
-      reportReview:buildReportReview({ recognition }),
-      reportFacts:[]
-    };
+    return { reportReview:buildReportReview({ recognition }), reportFacts:[] };
   }
 
   observeProgress({ phase:'structuring', percent:93, message:'正在整理经营字段和行列关系', stage:'structuring' });
@@ -256,10 +219,7 @@ async function analyzeImageReportDeepSeek({ file, buffer, parsed, extension, dep
       warning:'报表文字已识别，但经营字段结构化分析未完成，请重试后再确认报表。',
       failureCode:'REPORT_STRUCTURE_FAILED'
     };
-    return {
-      reportReview:buildReportReview({ recognition }),
-      reportFacts:[]
-    };
+    return { reportReview:buildReportReview({ recognition }), reportFacts:[] };
   }
 
   observeProgress({ phase:'report-check', percent:96, message:'正在复算公式并检查数据逻辑', stage:'checking-rules' });
@@ -282,11 +242,6 @@ async function analyzeImageReportDeepSeek({ file, buffer, parsed, extension, dep
   const conflicted = confirmationFactIds(confirmations, reconciled.facts);
   const reportFacts = reconciled.facts.map((fact) => ({ ...fact, trusted:!conflicted.has(fact.id) }));
   return { reportReview, reportFacts };
-}
-
-async function analyzeImageReport(args) {
-  if (shouldUseLegacyVision(args.deps)) return analyzeImageReportLegacy(args);
-  return analyzeImageReportDeepSeek(args);
 }
 
 function isStreamRequest(req) {
