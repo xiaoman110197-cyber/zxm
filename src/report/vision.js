@@ -131,6 +131,30 @@ function safeFailure(code, { model, logWarn }) {
   };
 }
 
+function normalizeApiKey(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function hasUnsafeHeaderControlCharacters(value) {
+  return /[\u0000-\u001f\u007f]/.test(value);
+}
+
+function classifyTransportFailure(error) {
+  const causeCode = String(error?.cause?.code || error?.code || '').toUpperCase();
+  if (causeCode === 'ENOTFOUND' || causeCode === 'EAI_AGAIN') return 'VISION_DNS_ERROR';
+  if (causeCode === 'UND_ERR_CONNECT_TIMEOUT' || causeCode === 'ETIMEDOUT') return 'VISION_CONNECT_TIMEOUT';
+  if (causeCode === 'ECONNRESET' || causeCode === 'UND_ERR_SOCKET') return 'VISION_CONNECTION_RESET';
+  if (causeCode === 'ECONNREFUSED') return 'VISION_CONNECTION_REFUSED';
+  if (
+    causeCode.startsWith('ERR_TLS_') ||
+    causeCode.startsWith('CERT_') ||
+    causeCode === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+    causeCode === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
+    causeCode === 'SELF_SIGNED_CERT_IN_CHAIN'
+  ) return 'VISION_TLS_ERROR';
+  return 'VISION_NETWORK_ERROR';
+}
+
 export async function analyzeReportImage(input, {
   apiKey = process.env.OPENAI_API_KEY || '',
   model = process.env.OPENAI_VISION_MODEL || 'gpt-5-mini',
@@ -138,7 +162,8 @@ export async function analyzeReportImage(input, {
   timeoutMs = 15000,
   logWarn = console.warn
 } = {}) {
-  if (!apiKey) {
+  const normalizedApiKey = normalizeApiKey(apiKey);
+  if (!normalizedApiKey) {
     return {
       available:false,
       provider:null,
@@ -148,6 +173,9 @@ export async function analyzeReportImage(input, {
       warning:'视觉分析暂不可用，已使用文字识别继续检查'
     };
   }
+  if (hasUnsafeHeaderControlCharacters(normalizedApiKey)) {
+    return safeFailure('VISION_REQUEST_CONFIG', { model, logWarn });
+  }
 
   const imageUrl = `data:${input.mimeType};base64,${input.buffer.toString('base64')}`;
   const controller = new AbortController();
@@ -156,7 +184,7 @@ export async function analyzeReportImage(input, {
   try {
     const response = await fetchImpl('https://api.openai.com/v1/responses', {
       method:'POST',
-      headers:{ Authorization:`Bearer ${apiKey}`, 'Content-Type':'application/json' },
+      headers:{ Authorization:`Bearer ${normalizedApiKey}`, 'Content-Type':'application/json' },
       signal:controller.signal,
       body:JSON.stringify({
         model,
@@ -207,7 +235,7 @@ export async function analyzeReportImage(input, {
       return safeFailure('VISION_TIMEOUT', { model, logWarn });
     }
     if (stage === 'response-json') return safeFailure('VISION_RESPONSE_JSON', { model, logWarn });
-    return safeFailure('VISION_NETWORK_ERROR', { model, logWarn });
+    return safeFailure(classifyTransportFailure(error), { model, logWarn });
   } finally {
     clearTimeout(timer);
   }
