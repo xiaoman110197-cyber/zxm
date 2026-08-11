@@ -180,13 +180,15 @@ async function analyzeImageReport({ file, buffer, parsed, extension, deps, obser
     source = 'qianfan_ocr';
     degraded = false;
   } else if (String(parsed.document?.text || '').trim()) {
+    const failureCode = cloud?.failureCode || null;
+    const failureLabel = failureCode ? `（错误编号 ${failureCode}）` : '';
     recognition = {
       mode:'local_ocr_degraded',
       completeReview:false,
       provider:'tesseract',
       model:null,
-      warning:'云端报表识别未完成，本次使用降级识别。关键数字需要核对，结果不能视为完整报表检查。',
-      failureCode:cloud?.failureCode || null
+      warning:`云端报表识别未完成${failureLabel}，本次使用降级识别。关键数字需要核对，结果不能视为完整报表检查。`,
+      failureCode
     };
     text = String(parsed.document.text).trim();
     source = 'local_ocr';
