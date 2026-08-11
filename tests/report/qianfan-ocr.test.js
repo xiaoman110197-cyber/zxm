@@ -44,6 +44,35 @@ test('returns safe HTTP code and never logs API key or provider body', async () 
   assert.doesNotMatch(result.warning, /secret-qianfan-key|secret provider body/);
 });
 
+test('extracts nested Qianfan error.code safely', async () => {
+  const result = await recognizeReportImage({ mimeType:'image/png', buffer:Buffer.from('x') }, {
+    apiKey:'k',
+    fetchImpl:async () => new Response(JSON.stringify({
+      error:{
+        code:'invalid_iam_token',
+        message:'sensitive provider message',
+        type:'invalid_request_error'
+      },
+      id:'as-test'
+    }), { status:401, headers:{ 'Content-Type':'application/json' } })
+  });
+  assert.equal(result.failureCode, 'OCR_HTTP_401_INVALID_IAM_TOKEN');
+  assert.doesNotMatch(result.warning, /sensitive provider message/);
+});
+
+test('classifies top-level Qianfan authentication code 216003 safely', async () => {
+  const result = await recognizeReportImage({ mimeType:'image/png', buffer:Buffer.from('x') }, {
+    apiKey:'k',
+    fetchImpl:async () => new Response(JSON.stringify({
+      code:216003,
+      message:'Authentication error with sensitive details',
+      requestId:'request-test'
+    }), { status:401, headers:{ 'Content-Type':'application/json' } })
+  });
+  assert.equal(result.failureCode, 'OCR_HTTP_401_AUTH_216003');
+  assert.doesNotMatch(result.warning, /sensitive details/);
+});
+
 test('classifies timeout as OCR_TIMEOUT', async () => {
   const result = await recognizeReportImage({ mimeType:'image/png', buffer:Buffer.from('x') }, {
     apiKey:'k',
