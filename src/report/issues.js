@@ -59,25 +59,27 @@ function ruleIssue(item, conflictedIds) {
   return downgraded;
 }
 
-function candidateIssue(candidate) {
-  const related = Array.isArray(candidate?.relatedFactIds) ? candidate.relatedFactIds.filter((id) => typeof id === 'string' && id.trim()).slice(0, 20) : [];
+function candidateIssue(candidate, source = 'ai_review') {
+  const related = Array.isArray(candidate?.relatedFactIds)
+    ? candidate.relatedFactIds.filter((id) => typeof id === 'string' && id.trim()).slice(0, 20)
+    : [];
   if (!related.length) return null;
   const base = {
-    id:`vision:${clean(candidate.scope, 120)}:${clean(candidate.title, 160)}`,
+    id:`${source}:${clean(candidate.scope, 120)}:${clean(candidate.title, 160)}`,
     title:clean(candidate.title, 160) || '报表异常',
     scope:clean(candidate.scope, 120) || '报表',
-    explanation:clean(candidate.explanation) || '视觉分析发现一处需要核对的异常。',
+    explanation:clean(candidate.explanation) || '模型发现一处需要核对的异常。',
     evidence:[],
     relatedFactIds:related,
     severity:'medium',
-    source:'vision'
+    source
   };
 
   if (candidate.kind === 'calculation_error') {
     return {
       ...base,
       kind:'needs_confirmation',
-      explanation:`视觉分析发现疑似计算问题，但程序目前不能复算证明正确结果，请核对原数据和公式。${base.explanation}`
+      explanation:`模型发现疑似计算问题，但程序目前不能复算证明正确结果，请核对原数据和公式。${base.explanation}`
     };
   }
   if (candidate.kind === 'logic_error') return { ...base, kind:'anomaly' };
@@ -98,7 +100,14 @@ function sortIssues(left, right) {
   return dedupeKey(left).localeCompare(dedupeKey(right), 'zh-CN');
 }
 
-export function buildReportReview({ ruleIssues = [], visionCandidates = [], confirmations = [], vision = null } = {}) {
+export function buildReportReview({
+  ruleIssues = [],
+  aiCandidates,
+  visionCandidates = [],
+  confirmations = [],
+  recognition = null,
+  vision = null
+} = {}) {
   const conflictedIds = confirmedFactIds(confirmations);
   const combined = [];
   const keys = new Set();
@@ -111,13 +120,25 @@ export function buildReportReview({ ruleIssues = [], visionCandidates = [], conf
     combined.push(issue);
   }
 
-  for (const raw of visionCandidates || []) {
-    const issue = candidateIssue(raw);
+  const primaryCandidates = Array.isArray(aiCandidates) ? aiCandidates : [];
+  for (const raw of primaryCandidates) {
+    const issue = candidateIssue(raw, 'ai_review');
     if (!issue) continue;
     const key = dedupeKey(issue);
     if (keys.has(key)) continue;
     keys.add(key);
     combined.push(issue);
+  }
+
+  if (!Array.isArray(aiCandidates)) {
+    for (const raw of visionCandidates || []) {
+      const issue = candidateIssue(raw, 'vision');
+      if (!issue) continue;
+      const key = dedupeKey(issue);
+      if (keys.has(key)) continue;
+      keys.add(key);
+      combined.push(issue);
+    }
   }
 
   for (const raw of confirmations || []) {
@@ -138,6 +159,10 @@ export function buildReportReview({ ruleIssues = [], visionCandidates = [], conf
       problemCount,
       provableCorrectionCount,
       confirmationCount,
+      recognitionMode:recognition?.mode || 'ocr_unavailable',
+      completeReview:recognition?.completeReview === true,
+      reviewWarning:clean(recognition?.warning, 300) || null,
+      failureCode:clean(recognition?.failureCode, 80) || null,
       visionAvailable:Boolean(vision?.available),
       visionWarning:clean(vision?.warning, 300) || null
     }
