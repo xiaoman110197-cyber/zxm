@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { auditWorkbook } from '../src/audit/rules.js';
 import { detectCalculationCorrections } from '../src/audit/corrections.js';
+import { createDeepSeekProvider } from '../src/ai/providers.js';
 import { parseBusinessDocument, supportedBusinessDocumentExtensions } from '../src/documents/parse.js';
 import { decodeBase64Strict } from '../src/http/base64.js';
 import { checkBurstLimit, requestClientKey } from '../src/http/guard.js';
 import { analyzeReportImage } from '../src/report/vision.js';
+import { recognizeReportImage } from '../src/report/qianfan-ocr.js';
+import { structureReportText } from '../src/report/structure.js';
 import { buildReportFacts } from '../src/report/facts.js';
 import { inspectReportFacts } from '../src/report/rules.js';
 import { buildReportReview } from '../src/report/issues.js';
@@ -105,21 +108,43 @@ function buildPayload(parsed, requestId, reportData = null) {
     payload.summary.reportProblemCount = reportData.reportReview.summary.problemCount;
     payload.summary.reportCorrectionCount = reportData.reportReview.summary.provableCorrectionCount;
     payload.summary.reportConfirmationCount = reportData.reportReview.summary.confirmationCount;
-    payload.summary.visionAvailable = reportData.reportReview.summary.visionAvailable;
+    payload.summary.reportRecognitionMode = reportData.reportReview.summary.recognitionMode;
+    payload.summary.reportCompleteReview = reportData.reportReview.summary.completeReview;
+    if (Object.prototype.hasOwnProperty.call(reportData.reportReview.summary, 'visionAvailable')) {
+      payload.summary.visionAvailable = reportData.reportReview.summary.visionAvailable;
+    }
   }
   return payload;
 }
 
-function confirmationFactIds(confirmations) {
+function confirmationFactIds(confirmations, facts = []) {
   const ids = new Set();
   for (const item of confirmations || []) {
-    if (typeof item?.factId === 'string' && item.factId) ids.add(item.factId);
-    else if (typeof item?.id === 'string' && item.id.startsWith('confirm:')) ids.add(item.id.slice('confirm:'.length));
+    if (typeof item?.factId === 'string' && item.factId) {
+      ids.add(item.factId);
+      continue;
+    }
+    if (typeof item?.id === 'string' && item.id.startsWith('confirm:')) {
+      const possibleId = item.id.slice('confirm:'.length);
+      if (facts.some((fact) => fact.id === possibleId)) ids.add(possibleId);
+    }
+    if (item?.scope && item?.metric) {
+      for (const fact of facts) {
+        if (fact.scope === item.scope && fact.metric === item.metric) ids.add(fact.id);
+      }
+    }
   }
   return ids;
 }
 
-async function analyzeImageReport({ file, buffer, parsed, extension, deps, observeProgress }) {
+function shouldUseLegacyVision(deps) {
+  return typeof deps.analyzeReportImage === 'function'
+    && typeof deps.recognizeReportImage !== 'function'
+    && typeof deps.reportStructurer !== 'function'
+    && !deps.reportStructureProvider;
+}
+
+async function analyzeImageReportLegacy({ file, buffer, parsed, extension, deps, observeProgress }) {
   const visionAnalyzer = deps.analyzeReportImage || analyzeReportImage;
   observeProgress({ phase:'vision', percent:90, message:'正在理解报表行列和关键数据', stage:'reading-table' });
   const vision = await visionAnalyzer({
@@ -137,9 +162,131 @@ async function analyzeImageReport({ file, buffer, parsed, extension, deps, obser
     confirmations:reconciled.confirmations,
     vision
   });
-  const conflicted = confirmationFactIds(reconciled.confirmations);
+  const conflicted = confirmationFactIds(reconciled.confirmations, reconciled.facts);
   const reportFacts = reconciled.facts.map((fact) => ({ ...fact, trusted:!conflicted.has(fact.id) }));
   return { reportReview, reportFacts };
+}
+
+function runtimeReportStructureProvider(deps) {
+  if (deps.reportStructureProvider) return deps.reportStructureProvider;
+  const apiKey = process.env.DEEPSEEK_API_KEY || '';
+  if (!apiKey) return null;
+  return createDeepSeekProvider({ apiKey, timeoutMs:12000 });
+}
+
+async function analyzeImageReportDeepSeek({ file, buffer, parsed, extension, deps, observeProgress }) {
+  const recognizer = deps.recognizeReportImage || recognizeReportImage;
+  observeProgress({ phase:'cloud-ocr', percent:88, message:'正在读取报表原图和表格结构', stage:'cloud-ocr' });
+
+  let cloud;
+  try {
+    cloud = await recognizer({
+      name:file.name,
+      buffer,
+      mimeType:mimeTypeOf(extension)
+    }, deps.qianfanOcrOptions || {});
+  } catch {
+    cloud = {
+      available:false,
+      provider:null,
+      model:null,
+      text:'',
+      failureCode:'OCR_PROVIDER_FAILED',
+      warning:'云端报表识别暂时失败'
+    };
+  }
+
+  let recognition;
+  let text;
+  let source;
+  let degraded;
+
+  if (cloud?.available && typeof cloud.text === 'string' && cloud.text.trim()) {
+    recognition = {
+      mode:'cloud_ocr_deepseek',
+      completeReview:true,
+      provider:cloud.provider || 'qianfan',
+      model:cloud.model || null,
+      warning:null,
+      failureCode:null
+    };
+    text = cloud.text.trim();
+    source = 'qianfan_ocr';
+    degraded = false;
+  } else if (String(parsed.document?.text || '').trim()) {
+    recognition = {
+      mode:'local_ocr_degraded',
+      completeReview:false,
+      provider:'tesseract',
+      model:null,
+      warning:'云端报表识别未完成，本次使用降级识别。关键数字需要核对，结果不能视为完整报表检查。',
+      failureCode:cloud?.failureCode || null
+    };
+    text = String(parsed.document.text).trim();
+    source = 'local_ocr';
+    degraded = true;
+  } else {
+    recognition = {
+      mode:'ocr_unavailable',
+      completeReview:false,
+      provider:null,
+      model:null,
+      warning:'未能可靠读取报表内容，请重新上传更清晰的图片。',
+      failureCode:cloud?.failureCode || 'OCR_UNAVAILABLE'
+    };
+    return {
+      reportReview:buildReportReview({ recognition }),
+      reportFacts:[]
+    };
+  }
+
+  observeProgress({ phase:'structuring', percent:93, message:'正在整理经营字段和行列关系', stage:'structuring' });
+  let structured;
+  try {
+    if (typeof deps.reportStructurer === 'function') {
+      structured = await deps.reportStructurer({ text, source, degraded, name:file.name });
+    } else {
+      const provider = runtimeReportStructureProvider(deps);
+      structured = await structureReportText({ text, source, degraded }, { provider });
+    }
+  } catch {
+    recognition = {
+      ...recognition,
+      completeReview:false,
+      warning:'报表文字已识别，但经营字段结构化分析未完成，请重试后再确认报表。',
+      failureCode:'REPORT_STRUCTURE_FAILED'
+    };
+    return {
+      reportReview:buildReportReview({ recognition }),
+      reportFacts:[]
+    };
+  }
+
+  observeProgress({ phase:'report-check', percent:96, message:'正在复算公式并检查数据逻辑', stage:'checking-rules' });
+  const reconciled = buildReportFacts({
+    structuredFacts:structured?.facts || [],
+    corroborationText:text,
+    degraded
+  });
+  const confirmations = [
+    ...(Array.isArray(structured?.confirmations) ? structured.confirmations : []),
+    ...(Array.isArray(reconciled.confirmations) ? reconciled.confirmations : [])
+  ];
+  const ruleIssues = inspectReportFacts(reconciled.facts, { now:deps.now || new Date() });
+  const reportReview = buildReportReview({
+    ruleIssues,
+    aiCandidates:structured?.candidates || [],
+    confirmations,
+    recognition
+  });
+  const conflicted = confirmationFactIds(confirmations, reconciled.facts);
+  const reportFacts = reconciled.facts.map((fact) => ({ ...fact, trusted:!conflicted.has(fact.id) }));
+  return { reportReview, reportFacts };
+}
+
+async function analyzeImageReport(args) {
+  if (shouldUseLegacyVision(args.deps)) return analyzeImageReportLegacy(args);
+  return analyzeImageReportDeepSeek(args);
 }
 
 function isStreamRequest(req) {
