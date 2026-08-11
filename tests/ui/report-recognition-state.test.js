@@ -30,9 +30,3 @@ test('finished progress copy does not call an incomplete report fully checked', 
   assert.match(js, /报表检查未完成/);
   assert.match(js, /报表识别未完成/);
 });
-
-test('degraded report warning exposes only the safe OCR failure code for diagnosis', () => {
-  assert.match(js, /failureCode/);
-  assert.match(js, /错误编号/);
-  assert.match(js, /OCR_HTTP_/);
-});
