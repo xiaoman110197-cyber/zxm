@@ -61,24 +61,20 @@ test('mobile images are resized before OCR transport when they are unnecessarily
   assert.match(js, /正在优化图片/);
 });
 
-test('switching the page to the background pauses a long file request and automatically retries once on return', () => {
-  assert.match(js, /visibilitychange/);
-  assert.match(js, /visibilityState/);
-  assert.match(js, /fileResumeAfterBackground/);
-  assert.match(js, /fileBackgroundRetryCount/);
-  assert.match(js, /自动重新分析|自动重试/);
+test('file analysis does not promise automatic background continuation', () => {
+  assert.match(js, /正在分析报表，请保持页面打开/);
+  assert.doesNotMatch(js, /自动重新分析|自动重试|返回本页面后会自动/);
 });
 
-test('file analysis exposes live percent stage elapsed time cancel and retry', () => {
+test('file analysis exposes coarse stage elapsed time cancel and retry without SSE transport', () => {
   assert.match(html, /id="file-progress"/);
   assert.match(html, /role="progressbar"/);
-  assert.match(html, /id="file-progress-percent"/);
   assert.match(html, /id="file-progress-message"/);
   assert.match(html, /id="file-progress-elapsed"/);
   assert.match(html, /id="cancel-file"/);
   assert.match(html, /id="retry-file"/);
-  assert.match(js, /analyze-file\?stream=1/);
-  assert.match(js, /getReader\(\)/);
+  assert.match(js, /fetch\(['"]\/api\/analyze-file['"]/);
+  assert.doesNotMatch(js, /analyze-file\?stream=1/);
   assert.match(js, /AbortController/);
   assert.match(js, /pendingFile/);
   assert.match(css, /progress-track/);
@@ -133,4 +129,30 @@ test('layout is mobile-first and avoids fixed desktop width', () => {
   assert.match(css, /max-width/);
   assert.match(css, /@media/);
   assert.doesNotMatch(css, /width:\s*1[2-9]\d{2}px/);
+});
+
+test('file analysis uses ordinary JSON POST instead of SSE streaming', () => {
+  assert.match(js, /fetch\(['"]\/api\/analyze-file['"]/);
+  assert.doesNotMatch(js, /\/api\/analyze-file\?stream=1/);
+
+  const start = js.indexOf('async function analyzeBusinessFile');
+  const end = js.indexOf('\nfunction ', start + 10);
+  const functionText = js.slice(start, end > start ? end : undefined);
+  assert.doesNotMatch(functionText, /getReader\(/);
+});
+
+test('file analysis copy tells mobile users to keep the page open', () => {
+  assert.match(js, /正在分析报表，请保持页面打开/);
+});
+
+test('browser-level file transport failures have a stable safe classification', () => {
+  assert.match(js, /FILE_TRANSPORT_FAILED/);
+  assert.match(js, /分析请求没有正常连接到服务器/);
+});
+
+
+test('browser bundle no longer contains file-analysis SSE parser helpers', () => {
+  assert.doesNotMatch(js, /function parseSseBlock/);
+  assert.doesNotMatch(js, /function readAnalysisStream/);
+  assert.doesNotMatch(js, /postFileAnalysisStream/);
 });
