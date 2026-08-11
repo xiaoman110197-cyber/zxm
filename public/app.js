@@ -792,11 +792,30 @@ async function readAnalysisStream(response, onProgress) {
   throw new Error('分析连接提前结束，请重新分析');
 }
 
-async function postFileAnalysisStream(file, contentBase64, { signal, onProgress }) {
-  const response = await fetch('/api/analyze-file?stream=1', {
-    method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify({ file:{ name:file.name, contentBase64 } }), signal
-  });
-  return readAnalysisStream(response, onProgress);
+async function postFileAnalysis(file, contentBase64, { signal } = {}) {
+  let response;
+  try {
+    response = await fetch('/api/analyze-file', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body:JSON.stringify({ file:{ name:file.name, contentBase64 } }),
+      signal
+    });
+  } catch (cause) {
+    if (signal?.aborted || cause?.name === 'AbortError') throw cause;
+    const error = new Error('分析请求没有正常连接到服务器。请保持页面打开并重试。');
+    error.code = 'FILE_TRANSPORT_FAILED';
+    throw error;
+  }
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || `文件分析请求失败 (${response.status})`);
+    error.requestId = data.requestId || '';
+    error.status = response.status;
+    throw error;
+  }
+  return data;
 }
 
 function correctionDecisionEvidence(pending) {
@@ -918,7 +937,7 @@ function chooseCorrection(index, choice) {
   updateReviewConfirmState();
 }
 
-async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
+async function analyzeBusinessFile(file) {
   if (!file || state.fileAnalysisController) return;
   const capturedDiagnosisId = state.diagnosis.id;
   const previousDocument = state.diagnosis.documents[0] || null;
@@ -934,11 +953,10 @@ async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
   const controller = new AbortController();
   state.fileAnalysisController = controller;
   $('workbook').disabled = true;
-  $('file-status').textContent = automaticRetry ? '检测到刚才切换到后台后连接中断，正在自动重新分析一次。' : (previousDocument ? '正在分析新资料；此前成功分析的资料会保留到新结果确认后再替换。' : '');
+  $('file-status').textContent = previousDocument ? '正在分析新资料；此前成功分析的资料会保留到新结果确认后再替换。' : '';
   setFileProgress(2, isImageFile(file) ? '正在优化图片' : '正在读取文件', { reset:true });
   setFileProgressActions({ analyzing:true, retry:false });
   startFileElapsedTimer();
-  let retryAfterFinally = false;
   try {
     const transportFile = isImageFile(file) ? await optimizeImageForOcr(file, { signal:controller.signal }) : file;
     if (transportFile.size > MAX_FILE_BYTES) throw new Error('优化后的文件仍超过 3 MB，请先裁剪或压缩后再上传');
@@ -947,13 +965,12 @@ async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
       signal:controller.signal,
       onProgress:(fraction) => setFileProgress(2 + fraction * 6, transportFile !== file ? '正在读取优化后的图片' : '正在读取文件')
     });
-    setFileProgress(8, '文件已读取，正在发送到分析服务');
-    const result = await postFileAnalysisStream(transportFile, contentBase64, { signal:controller.signal, onProgress:(event) => setFileProgress(event?.percent, event?.message) });
+    setFileProgress(8, '正在上传资料');
+    setFileProgress(15, '正在分析报表，请保持页面打开');
+    const result = await postFileAnalysis(transportFile, contentBase64, { signal:controller.signal });
     if (controller.signal.aborted || state.diagnosis.id !== capturedDiagnosisId) return;
     applySuccessfulFileAnalysis(file, contentBase64, result);
     state.pendingFile = null;
-    state.fileResumeAfterBackground = false;
-    state.fileBackgroundRetryCount = 0;
     const reportSummary = result.reportReview?.summary || null;
     const completionMessage = result.document?.type === 'image'
       ? (reportSummary?.recognitionMode === 'ocr_unavailable'
@@ -967,26 +984,14 @@ async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
   } catch (error) {
     if (state.diagnosis.id !== capturedDiagnosisId) return;
     const cancelled = error?.name === 'AbortError';
-    const canAutoRetry = !cancelled && state.fileResumeAfterBackground && state.fileBackgroundRetryCount < 1;
-    if (canAutoRetry && document.visibilityState === 'visible') {
-      state.fileBackgroundRetryCount += 1;
-      retryAfterFinally = true;
-      $('file-errors').textContent = '刚才切换到后台后分析连接中断，正在自动重试一次。';
-      $('file-progress-message').textContent = '连接中断，准备自动重新分析';
-      setFileProgressActions({ analyzing:false, retry:false });
-    } else if (canAutoRetry) {
-      $('file-errors').textContent = '分析连接已中断；返回本页面后会自动重新分析一次。';
-      $('file-progress-message').textContent = '等待返回页面后自动重试';
-      setFileProgressActions({ analyzing:false, retry:true });
-    } else {
-      let baseMessage;
-      if (cancelled) baseMessage = '已取消分析。';
-      else if (error.status === 429) baseMessage = errorWithRequestId('文件分析请求较频繁，请稍后再试。', error.requestId);
-      else baseMessage = errorWithRequestId(`文件分析失败：${error.message}`, error.requestId);
-      $('file-errors').textContent = `${baseMessage}${previousDocument ? ' 此前成功分析的资料仍保留。' : ''}`;
-      $('file-progress-message').textContent = cancelled ? '分析已取消，可重新分析' : '分析已中断，可重新分析';
-      setFileProgressActions({ analyzing:false, retry:Boolean(state.pendingFile) });
-    }
+    let baseMessage;
+    if (cancelled) baseMessage = '已取消分析。';
+    else if (error.code === 'FILE_TRANSPORT_FAILED') baseMessage = `${error.message}（错误类型：FILE_TRANSPORT_FAILED）`;
+    else if (error.status === 429) baseMessage = errorWithRequestId('文件分析请求较频繁，请稍后再试。', error.requestId);
+    else baseMessage = errorWithRequestId(`文件分析失败：${error.message}`, error.requestId);
+    $('file-errors').textContent = `${baseMessage}${previousDocument ? ' 此前成功分析的资料仍保留。' : ''}`;
+    $('file-progress-message').textContent = cancelled ? '分析已取消，可重新分析' : '分析已中断，可重新分析';
+    setFileProgressActions({ analyzing:false, retry:Boolean(state.pendingFile) });
   } finally {
     if (state.fileAnalysisController === controller) {
       stopFileElapsedTimer();
@@ -994,7 +999,6 @@ async function analyzeBusinessFile(file, { automaticRetry = false } = {}) {
       $('workbook').disabled = false;
       state.fileAnalysisController = null;
     }
-    if (retryAfterFinally && state.pendingFile && state.diagnosis.id === capturedDiagnosisId) setTimeout(() => analyzeBusinessFile(state.pendingFile, { automaticRetry:true }), 0);
   }
 }
 
@@ -1027,9 +1031,9 @@ async function downloadReport() {
   }
 }
 
-function retryPendingFile({ automaticRetry = false } = {}) {
+function retryPendingFile() {
   if (!state.pendingFile || state.fileAnalysisController) return;
-  analyzeBusinessFile(state.pendingFile, { automaticRetry });
+  analyzeBusinessFile(state.pendingFile);
 }
 
 $('send').addEventListener('click', sendDiagnosis);
@@ -1038,14 +1042,10 @@ $('new-diagnosis').addEventListener('click', resetDiagnosisExperience);
 $('owner-input').addEventListener('keydown', (event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') sendDiagnosis(); });
 $('workbook').addEventListener('change', (event) => {
   const file = event.target.files?.[0];
-  if (file) {
-    state.fileResumeAfterBackground = false;
-    state.fileBackgroundRetryCount = 0;
-    analyzeBusinessFile(file);
-  }
+  if (file) analyzeBusinessFile(file);
 });
-$('cancel-file').addEventListener('click', () => { state.fileResumeAfterBackground = false; state.fileAnalysisController?.abort(); });
-$('retry-file').addEventListener('click', () => { state.fileResumeAfterBackground = false; state.fileBackgroundRetryCount = 0; retryPendingFile(); });
+$('cancel-file').addEventListener('click', () => { state.fileAnalysisController?.abort(); });
+$('retry-file').addEventListener('click', () => { retryPendingFile(); });
 $('file-review-corrections').addEventListener('click', (event) => {
   const button = event.target.closest?.('[data-correction-choice]');
   if (!button) return;
@@ -1055,18 +1055,5 @@ $('file-review-corrections').addEventListener('click', (event) => {
 $('confirm-file').addEventListener('click', confirmPendingFileReview);
 $('replace-file').addEventListener('click', replacePendingFileReview);
 $('download-excel').addEventListener('click', downloadReport);
-
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden' && state.fileAnalysisController && state.pendingFile) {
-    state.fileResumeAfterBackground = true;
-    $('file-progress-message').textContent = '页面已切到后台；若连接被系统中断，返回后会自动重试一次';
-    return;
-  }
-  if (document.visibilityState === 'visible' && state.fileResumeAfterBackground && !state.fileAnalysisController && state.pendingFile && state.fileBackgroundRetryCount < 1) {
-    state.fileBackgroundRetryCount += 1;
-    $('file-errors').textContent = '检测到后台切换导致连接中断，正在自动重新分析一次。';
-    retryPendingFile({ automaticRetry:true });
-  }
-});
 
 restoreSession();

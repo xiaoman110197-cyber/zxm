@@ -61,24 +61,20 @@ test('mobile images are resized before OCR transport when they are unnecessarily
   assert.match(js, /正在优化图片/);
 });
 
-test('switching the page to the background pauses a long file request and automatically retries once on return', () => {
-  assert.match(js, /visibilitychange/);
-  assert.match(js, /visibilityState/);
-  assert.match(js, /fileResumeAfterBackground/);
-  assert.match(js, /fileBackgroundRetryCount/);
-  assert.match(js, /自动重新分析|自动重试/);
+test('file analysis does not promise automatic background continuation', () => {
+  assert.match(js, /正在分析报表，请保持页面打开/);
+  assert.doesNotMatch(js, /自动重新分析|自动重试|返回本页面后会自动/);
 });
 
-test('file analysis exposes live percent stage elapsed time cancel and retry', () => {
+test('file analysis exposes coarse stage elapsed time cancel and retry without SSE transport', () => {
   assert.match(html, /id="file-progress"/);
   assert.match(html, /role="progressbar"/);
-  assert.match(html, /id="file-progress-percent"/);
   assert.match(html, /id="file-progress-message"/);
   assert.match(html, /id="file-progress-elapsed"/);
   assert.match(html, /id="cancel-file"/);
   assert.match(html, /id="retry-file"/);
-  assert.match(js, /analyze-file\?stream=1/);
-  assert.match(js, /getReader\(\)/);
+  assert.match(js, /fetch\(['"]\/api\/analyze-file['"]/);
+  assert.doesNotMatch(js, /analyze-file\?stream=1/);
   assert.match(js, /AbortController/);
   assert.match(js, /pendingFile/);
   assert.match(css, /progress-track/);
