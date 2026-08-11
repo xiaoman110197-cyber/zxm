@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { handleDiagnosisRequest } from '../../api/diagnosis.js';
 
 function mockRes() {
@@ -8,11 +8,30 @@ function mockRes() {
 }
 
 const diagnosis = { id:'deepseek-only', answers:{ problem:'利润下降' }, evidence:[], findings:[], documents:[] };
+const FORBIDDEN = /api\.openai\.com|OPENAI_API_KEY|OPENAI_VISION_MODEL|OPENAI_MODEL|createOpenAIProvider|analyzeReportImage/;
 
-test('production runtime has no OpenAI dependency', async () => {
-  for (const path of ['../../api/analyze-file.js','../../api/diagnosis.js','../../src/ai/providers.js']) {
-    const text = await readFile(new URL(path, import.meta.url), 'utf8');
-    assert.doesNotMatch(text, /api\.openai\.com|OPENAI_API_KEY|createOpenAIProvider|analyzeReportImage/, path);
+async function sourceFiles(relativeDir) {
+  const root = new URL(relativeDir, import.meta.url);
+  const entries = await readdir(root, { withFileTypes:true });
+  const files = [];
+  for (const entry of entries) {
+    const url = new URL(entry.name, root.href.endsWith('/') ? root : new URL(`${root.href}/`));
+    if (entry.isDirectory()) files.push(...await sourceFiles(`${relativeDir}${entry.name}/`));
+    else if (/\.(?:js|html|css|md)$/.test(entry.name)) files.push(url);
+  }
+  return files;
+}
+
+test('all production runtime sources have no OpenAI dependency', async () => {
+  const files = [
+    ...await sourceFiles('../../api/'),
+    ...await sourceFiles('../../src/'),
+    ...await sourceFiles('../../public/'),
+    new URL('../../README.md', import.meta.url)
+  ];
+  for (const url of files) {
+    const text = await readFile(url, 'utf8');
+    assert.doesNotMatch(text, FORBIDDEN, url.pathname);
   }
 });
 
@@ -37,7 +56,6 @@ test('same DeepSeek provider performs a separate review pass', async () => {
   await handleDiagnosisRequest({ method:'POST', body:{ diagnosis } }, res, {
     primaryProvider:provider,
     reviewerProvider:provider,
-    fallbackProvider:null,
     disableBurstGuard:true
   });
   assert.equal(res.statusCode, 200);
