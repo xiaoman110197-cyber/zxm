@@ -36,10 +36,12 @@ const cloudText = [
   '华南大区 毛利率 85%'
 ].join('\n');
 
-test('cloud OCR success routes through DeepSeek structuring and deterministic rules', async () => {
+test('ordinary POST cloud OCR success routes through DeepSeek structuring and deterministic rules', async () => {
   const res = mockRes();
   let structureInput;
-  await handleAnalyzeFileRequest(reqFor(), res, {
+  const req = reqFor();
+  assert.equal(req.query, undefined);
+  await handleAnalyzeFileRequest(req, res, {
     disableBurstGuard:true,
     parseBusinessDocument:imageParser('本地 OCR 不应成为正常模式主证据'),
     recognizeReportImage:async () => ({
@@ -53,6 +55,7 @@ test('cloud OCR success routes through DeepSeek structuring and deterministic ru
   });
 
   assert.equal(res.statusCode, 200);
+  assert.equal(typeof res.body.requestId, 'string');
   assert.equal(structureInput.source, 'qianfan_ocr');
   assert.equal(structureInput.degraded, false);
   assert.equal(res.body.reportReview.summary.recognitionMode, 'cloud_ocr_deepseek');
@@ -62,10 +65,12 @@ test('cloud OCR success routes through DeepSeek structuring and deterministic ru
   assert.equal(res.body.reportFacts.every((fact) => fact.trusted === true), true);
 });
 
-test('cloud OCR failure falls back to local OCR in explicit degraded mode', async () => {
+test('ordinary POST cloud OCR failure preserves provider code in explicit degraded mode', async () => {
   const res = mockRes();
   let structureInput;
-  await handleAnalyzeFileRequest(reqFor(), res, {
+  const req = reqFor();
+  assert.equal(req.query, undefined);
+  await handleAnalyzeFileRequest(req, res, {
     disableBurstGuard:true,
     parseBusinessDocument:imageParser('华南大区 营收 9800'),
     recognizeReportImage:async () => ({
@@ -110,9 +115,11 @@ test('cloud and local OCR both unavailable returns ocr_unavailable without fake 
   assert.deepEqual(res.body.reportFacts, []);
 });
 
-test('structuring failure preserves OCR mode but marks review incomplete and does not run raw OCR as trusted facts', async () => {
+test('ordinary POST structuring failure preserves OCR mode and reports safe failure code', async () => {
   const res = mockRes();
-  await handleAnalyzeFileRequest(reqFor(), res, {
+  const req = reqFor();
+  assert.equal(req.query, undefined);
+  await handleAnalyzeFileRequest(req, res, {
     disableBurstGuard:true,
     parseBusinessDocument:imageParser('华南大区 营收 9800'),
     recognizeReportImage:async () => ({
