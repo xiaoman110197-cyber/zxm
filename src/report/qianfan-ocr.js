@@ -1,5 +1,21 @@
 const ENDPOINT = 'https://qianfan.baidubce.com/v2/chat/completions';
 const SUPPORTED_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg']);
+const SAFE_PROVIDER_ERROR_CODES = new Set([
+  'no_parameter_permission',
+  'invalid_model',
+  'invalid_appid',
+  'invalid_iam_token',
+  'coding_plan_api_key_required',
+  'coding_plan_api_key_not_allowed',
+  'coding_plan_not_subscribed',
+  'coding_plan_subscription_expired',
+  'coding_plan_model_not_supported',
+  'coding_plan_hour_quota_exceeded',
+  'coding_plan_week_quota_exceeded',
+  'coding_plan_month_quota_exceeded',
+  'coding_plan_rate_limit_exceeded',
+  'coding_plan_cluster_rate_limited'
+]);
 
 function safeFailure(code, { model, logWarn }) {
   if (typeof logWarn === 'function') logWarn('[qianfan-ocr]', code, `model=${model}`);
@@ -11,6 +27,22 @@ function safeFailure(code, { model, logWarn }) {
     failureCode:code,
     warning:`云端报表识别暂时失败（错误编号 ${code}）`
   };
+}
+
+function safeProviderErrorCode(status, payload) {
+  const raw = String(payload?.code || '').trim().toLowerCase();
+  if (!SAFE_PROVIDER_ERROR_CODES.has(raw)) return `OCR_HTTP_${status || 'UNKNOWN'}`;
+  return `OCR_HTTP_${status || 'UNKNOWN'}_${raw.toUpperCase()}`;
+}
+
+async function classifyHttpFailure(response) {
+  const fallback = `OCR_HTTP_${response.status || 'UNKNOWN'}`;
+  try {
+    const payload = await response.json();
+    return safeProviderErrorCode(response.status, payload);
+  } catch {
+    return fallback;
+  }
 }
 
 function classifyTransportFailure(error) {
@@ -71,7 +103,10 @@ export async function recognizeReportImage(input, {
       })
     });
 
-    if (!response.ok) return safeFailure(`OCR_HTTP_${response.status || 'UNKNOWN'}`, { model, logWarn });
+    if (!response.ok) {
+      const failureCode = await classifyHttpFailure(response);
+      return safeFailure(failureCode, { model, logWarn });
+    }
 
     stage = 'response-json';
     let payload;
