@@ -85,6 +85,7 @@ test('cloud OCR failure falls back to local OCR in explicit degraded mode', asyn
   assert.equal(res.body.reportReview.summary.completeReview, false);
   assert.equal(res.body.reportReview.summary.failureCode, 'OCR_HTTP_429');
   assert.match(res.body.reportReview.summary.reviewWarning, /降级识别|关键数字需要核对/);
+  assert.match(res.body.reportReview.summary.reviewWarning, /OCR_HTTP_429/);
   assert.ok(res.body.reportReview.summary.confirmationCount >= 1);
 });
 
