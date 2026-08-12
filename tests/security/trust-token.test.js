@@ -23,6 +23,23 @@ test('rejects tampering, wrong key, wrong type and expiry', () => {
   assert.throws(() => verifyTrustToken(token, 'analysis', { secret, now:now + 1_001 }), /expired/i);
 });
 
+test('rejects a non-canonical Base64url signature even when it decodes to the same bytes', () => {
+  let token = signTrustToken('analysis', { summary:{ rowCount:2 } }, { secret, now });
+  let parts = token.split('.');
+  let replacement = parts[2].endsWith('A') ? 'B' : 'A';
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidate = `${parts[2].slice(0, -1)}${replacement}`;
+    if (Buffer.from(candidate, 'base64url').equals(Buffer.from(parts[2], 'base64url'))) {
+      assert.throws(() => verifyTrustToken(`${parts[0]}.${parts[1]}.${candidate}`, 'analysis', { secret, now }), /invalid/i);
+      return;
+    }
+    token = signTrustToken('analysis', { summary:{ rowCount:attempt + 3 } }, { secret, now });
+    parts = token.split('.');
+    replacement = parts[2].endsWith('A') ? 'B' : 'A';
+  }
+  assert.fail('expected to construct an equivalent non-canonical Base64url signature');
+});
+
 test('rejects missing signing configuration and oversized payloads', () => {
   assert.throws(() => signTrustToken('analysis', {}, { env:{}, now }), /signing/i);
   assert.throws(

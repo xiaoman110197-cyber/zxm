@@ -61,6 +61,9 @@ export function verifyTrustToken(token, expectedType, options = {}) {
   } catch {
     throw invalidToken();
   }
+  if (suppliedSignature.toString('base64url') !== parts[2] || payload.toString('base64url') !== parts[1]) {
+    throw invalidToken();
+  }
   if (!payload.length || payload.length > MAX_PAYLOAD_BYTES) throw invalidToken();
   const expectedSignature = signatureFor(parts[1], secret);
   if (suppliedSignature.length !== expectedSignature.length || !timingSafeEqual(suppliedSignature, expectedSignature)) {
