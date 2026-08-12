@@ -21,7 +21,7 @@ function imageParser(text = '') {
 }
 
 function reqFor() {
-  return { method:'POST', body:{ file:{ name:'经营报表.png', contentBase64:Buffer.from('image-bytes').toString('base64') } } };
+  return { method:'POST', body:{ file:{ name:'经营报表.png', contentBase64:Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1]).toString('base64') } } };
 }
 
 const structuredFacts = [
@@ -72,13 +72,13 @@ test('ordinary POST cloud OCR failure preserves provider code in explicit degrad
   assert.equal(req.query, undefined);
   await handleAnalyzeFileRequest(req, res, {
     disableBurstGuard:true,
-    parseBusinessDocument:imageParser('华南大区 营收 9800'),
+    parseBusinessDocument:imageParser('华南大区 营收 9800 万元'),
     recognizeReportImage:async () => ({
       available:false, provider:null, model:null, text:'', failureCode:'OCR_HTTP_429', warning:'云端识别失败'
     }),
     reportStructurer:async (input) => {
       structureInput = input;
-      return { facts:[{ id:'r', scope:'华南大区', metric:'营收', value:9800, unit:'', sourceText:'华南大区 营收 9800', confidence:0.64, source:'local_ocr_ai' }], candidates:[], confirmations:[] };
+      return { facts:[{ id:'r', scope:'华南大区', metric:'营收', value:9800, unit:'万元', sourceText:'华南大区 营收 9800 万元', confidence:0.64, source:'local_ocr_ai' }], candidates:[], confirmations:[] };
     },
     visionOptions:{ apiKey:'' }
   });
@@ -161,4 +161,56 @@ test('image analysis progress exposes cloud OCR, structuring and program check s
   assert.ok(structureIndex > cloudIndex, JSON.stringify(progress));
   assert.ok(checkIndex > structureIndex, JSON.stringify(progress));
   assert.ok(logs.every((line) => !line.includes('123456') && !line.includes('9800') && !line.includes('6100')), JSON.stringify(logs));
+});
+
+test('real parser never starts local OCR when cloud OCR succeeds', async () => {
+  let localCalls = 0;
+  const res = mockRes();
+  await handleAnalyzeFileRequest(reqFor(), res, {
+    disableBurstGuard:true,
+    imageOcr:async () => { localCalls += 1; return { text:'本地文本', confidence:0.9, uncertainSegments:[] }; },
+    recognizeReportImage:async () => ({ available:true, provider:'qianfan', model:'deepseek-ocr', text:cloudText }),
+    reportStructurer:async () => ({ facts:structuredFacts, candidates:[], confirmations:[] })
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(localCalls, 0);
+  assert.equal(res.body.document.text, cloudText);
+  assert.equal(res.body.reportReview.summary.recognitionMode, 'cloud_ocr_deepseek');
+});
+
+test('real parser starts local OCR exactly once only after cloud OCR fails', async () => {
+  let localCalls = 0;
+  const res = mockRes();
+  await handleAnalyzeFileRequest(reqFor(), res, {
+    disableBurstGuard:true,
+    imageOcr:async () => {
+      localCalls += 1;
+      return { text:'华南大区 营收 9800 万元', confidence:0.8, uncertainSegments:[] };
+    },
+    recognizeReportImage:async () => ({ available:false, failureCode:'OCR_HTTP_401_INVALID_APPID', text:'' }),
+    reportStructurer:async () => ({
+      facts:[{ id:'r', scope:'华南大区', metric:'营收', value:9800, unit:'万元', sourceText:'华南大区 营收 9800 万元', confidence:0.64 }],
+      candidates:[], confirmations:[]
+    })
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(localCalls, 1);
+  assert.equal(res.body.document.text, '华南大区 营收 9800 万元');
+  assert.equal(res.body.reportReview.summary.recognitionMode, 'local_ocr_degraded');
+});
+
+test('cloud OCR with zero valid structured facts is explicitly incomplete', async () => {
+  const res = mockRes();
+  await handleAnalyzeFileRequest(reqFor(), res, {
+    disableBurstGuard:true,
+    recognizeReportImage:async () => ({ available:true, provider:'qianfan', model:'deepseek-ocr', text:cloudText }),
+    reportStructurer:async () => ({ facts:[], candidates:[], confirmations:[] })
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.reportReview.summary.completeReview, false);
+  assert.equal(res.body.reportReview.summary.failureCode, 'REPORT_STRUCTURE_EMPTY');
+  assert.match(res.body.reportReview.summary.reviewWarning, /未形成|经营字段|核对/);
 });

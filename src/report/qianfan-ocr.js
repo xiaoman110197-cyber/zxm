@@ -78,12 +78,14 @@ function classifyTransportFailure(error) {
 
 export async function recognizeReportImage(input, {
   apiKey = process.env.QIANFAN_API_KEY || '',
+  appId = process.env.QIANFAN_APP_ID || '',
   model = process.env.QIANFAN_OCR_MODEL || 'deepseek-ocr',
   fetchImpl = fetch,
   timeoutMs = 20000,
   logWarn = console.warn
 } = {}) {
   const key = String(apiKey || '').trim();
+  const configuredAppId = String(appId || '').trim();
   if (!key) return safeFailure('OCR_KEY_MISSING', { model, logWarn });
   if (!SUPPORTED_IMAGE_MIME_TYPES.has(input?.mimeType)) {
     return safeFailure('OCR_UNSUPPORTED_IMAGE', { model, logWarn });
@@ -100,7 +102,11 @@ export async function recognizeReportImage(input, {
   try {
     const response = await fetchImpl(ENDPOINT, {
       method:'POST',
-      headers:{ Authorization:`Bearer ${key}`, 'Content-Type':'application/json' },
+      headers:{
+        Authorization:`Bearer ${key}`,
+        'Content-Type':'application/json',
+        ...(configuredAppId ? { appid:configuredAppId } : {})
+      },
       signal:controller.signal,
       body:JSON.stringify({
         model,

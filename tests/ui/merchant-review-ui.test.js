@@ -21,7 +21,8 @@ test('upload review uses plain-language report sections instead of one long OCR 
   assert.match(js, /renderReportReview/);
   assert.match(js, /renderReportIssueCard/);
   assert.match(js, /calculation_error/);
-  assert.match(js, /reportReviewEvidence/);
+  assert.match(js, /analysisToken/);
+  assert.doesNotMatch(js, /reportReviewEvidence/);
   assert.match(js, /renderLegacyFileReview/);
   assert.doesNotMatch(js, /function renderReportReview[\s\S]*?reviewModel\.importantIssues/);
 

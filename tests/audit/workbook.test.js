@@ -57,3 +57,45 @@ test('detects cross-sheet revenue mismatch without classifying it as a business 
   assert.equal(mismatch.actual, 999);
   assert.equal(audit.anomalies.some(a => a.type === 'cross_sheet_total_mismatch'), false);
 });
+
+function workbookWithSheets(count) {
+  const wb = XLSX.utils.book_new();
+  for (let index = 0; index < count; index += 1) {
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['值'], [index]]), `表${index + 1}`);
+  }
+  return XLSX.write(wb, { type:'buffer', bookType:'xlsx' });
+}
+
+test('rejects workbooks with more than 30 sheets', () => {
+  assert.throws(() => parseWorkbook(workbookWithSheets(31)), /Sheet|工作表|30|上限/i);
+});
+
+test('rejects sheets wider than 200 columns', () => {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
+    Array.from({ length:201 }, (_, index) => `列${index + 1}`),
+    Array.from({ length:201 }, (_, index) => index)
+  ]), '超宽表');
+  const buffer = XLSX.write(wb, { type:'buffer', bookType:'xlsx' });
+  assert.throws(() => parseWorkbook(buffer), /列|column|200|上限/i);
+});
+
+test('rejects sheets with more than 50000 data rows', () => {
+  const wb = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([['值']]);
+  sheet.A50002 = { t:'n', v:1 };
+  sheet['!ref'] = 'A1:A50002';
+  XLSX.utils.book_append_sheet(wb, sheet, '超长表');
+  const buffer = XLSX.write(wb, { type:'buffer', bookType:'xlsx' });
+  assert.throws(() => parseWorkbook(buffer), /行|row|50000|上限/i);
+});
+
+test('rejects workbook ranges above the 250000 cell budget', () => {
+  const wb = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([['值']]);
+  sheet.GR1251 = { t:'n', v:1 };
+  sheet['!ref'] = 'A1:GR1251';
+  XLSX.utils.book_append_sheet(wb, sheet, '超大范围');
+  const buffer = XLSX.write(wb, { type:'buffer', bookType:'xlsx' });
+  assert.throws(() => parseWorkbook(buffer), /单元格|cell|250000|上限/i);
+});

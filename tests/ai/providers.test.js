@@ -78,6 +78,7 @@ test('review prompt is an independent second pass and protects deterministic fac
   await provider.review({ findings:[] });
   assert.match(systemPrompt, /第二次独立复核/);
   assert.match(systemPrompt, /deterministic|程序/);
+  assert.match(systemPrompt, /finding_1|稳定 id|对应 id/);
 });
 
 test('provider aborts an upstream request after its configured timeout', async () => {

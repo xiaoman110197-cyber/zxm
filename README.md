@@ -37,11 +37,19 @@
 ```text
 QIANFAN_API_KEY       必填：千帆 deepseek-ocr 云端图片识别
 QIANFAN_OCR_MODEL     可选：默认 deepseek-ocr
+QIANFAN_APP_ID        可选：仅当 API Key 被细粒度权限绑定到指定 AppID 时配置
 DEEPSEEK_API_KEY      必填：报表结构化、经营诊断和复核
 DEEPSEEK_MODEL        可选：默认 deepseek-v4-flash
+EVIDENCE_SIGNING_SECRET 推荐：独立的短期证据签名密钥
 ```
 
 API Key 只能保存在服务端环境变量中，不应写入前端代码、仓库、日志或截图。
+
+部署后访问 `/api/health` 可安全核对当前环境、分支、短提交 SHA、项目标识、模型名，以及 Qianfan Key 是否存在/是否为 `bce-v3` 格式。该接口只显示 `QIANFAN_APP_ID` 是否已配置，不返回 AppID 或任何密钥内容，并设置 `Cache-Control: no-store`。
+
+Vercel 的 Preview 与 Production 环境变量相互独立。修改环境变量后，需要为目标环境创建一次新部署；检查健康接口时，应把返回的分支和短 SHA 与当前 PR 的提交对齐。如果同一 GitHub 提交出现多个 Vercel 检查项，必须先确定实际测试的项目，避免在旧项目或错误 Preview 上排查。
+
+若健康接口显示 Key 为 `bce-v3` 且仍返回 `OCR_HTTP_401_INVALID_APPID`，再检查该 Key 是否启用了千帆细粒度权限：受限 Key 可能要求同时发送它绑定的 AppID，此时才配置 `QIANFAN_APP_ID`。普通未绑定 Key 不需要设置该变量。
 
 每次修改报表识别主链路后，必须在 Preview 环境用同一张参考报表做真实上传测试，确认进度依次经过 `cloud-ocr → structuring → report-check → complete`，并确认结果模式为 `cloud_ocr_deepseek`。没有真实 Preview 验证时，不应仅凭单元测试宣称云端报表识别已经可用。
 

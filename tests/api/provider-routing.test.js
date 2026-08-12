@@ -39,7 +39,7 @@ test('runs a second DeepSeek review pass for high-risk findings', async () => {
       title:'利润数据存在严重异常', status:'confirmed', priority:'P0', evidence:['报表毛利率异常'], confidence:0.9,
       impact:'利润风险', action:'立即核对成本', metric:'毛利率'
     }] }),
-    review:async () => { reviewCalled = true; return { reviews:[{ title:'利润数据存在严重异常', verdict:'agree', reason:'证据支持', missingEvidence:[] }] }; }
+    review:async ({ findings }) => { reviewCalled = true; return { reviews:[{ id:findings[0].id, title:'利润数据存在严重异常', verdict:'agree', reason:'证据支持', missingEvidence:[] }] }; }
   };
   const res = mockRes();
   await handleDiagnosisRequest({ method:'POST', body:{ diagnosis } }, res, {
@@ -65,7 +65,7 @@ test('reviewer failure does not discard a valid primary diagnosis', async () => 
   assert.equal(res.body.findings[0].crossModelStatus, 'review_unavailable');
 });
 
-test('falls back to single-model result when reviewer is unavailable', async () => {
+test('marks every unreviewed AI result unavailable when reviewer is unavailable', async () => {
   const res = mockRes();
   await handleDiagnosisRequest({ method:'POST', body:{ diagnosis } }, res, {
     primaryProvider:{ name:'deepseek', diagnose:async () => ({ mode:'finding', question:null, findings:[{
@@ -75,5 +75,5 @@ test('falls back to single-model result when reviewer is unavailable', async () 
     reviewerProvider:null
   });
   assert.equal(res.statusCode, 200);
-  assert.equal(res.body.findings[0].crossModelStatus, 'single_model');
+  assert.equal(res.body.findings[0].crossModelStatus, 'review_unavailable');
 });

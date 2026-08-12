@@ -31,6 +31,21 @@ test('sends one Base64 image to Qianfan deepseek-ocr and returns message content
   assert.match(result.text, /华南/);
 });
 
+test('sends an optional Qianfan appid header only when explicitly configured', async () => {
+  const seenHeaders = [];
+  const fetchImpl = async (_url, init) => {
+    seenHeaders.push(init.headers);
+    return new Response(JSON.stringify({ choices:[{ message:{ content:'识别结果' } }] }), { status:200 });
+  };
+
+  const input = { mimeType:'image/png', buffer:Buffer.from('x') };
+  await recognizeReportImage(input, { apiKey:'bce-v3/key', appId:' app-test ', fetchImpl });
+  await recognizeReportImage(input, { apiKey:'bce-v3/key', appId:'   ', fetchImpl });
+
+  assert.equal(seenHeaders[0].appid, 'app-test');
+  assert.equal(Object.prototype.hasOwnProperty.call(seenHeaders[1], 'appid'), false);
+});
+
 test('returns safe HTTP code and never logs API key or provider body', async () => {
   const logs = [];
   const result = await recognizeReportImage({ mimeType:'image/png', buffer:Buffer.from('x') }, {

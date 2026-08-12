@@ -8,7 +8,17 @@ const MAX_OCR_IMAGE_DIMENSION = 2000;
 const MAX_SOURCE_IMAGE_BYTES = 12 * 1024 * 1024;
 
 function newDiagnosis() {
-  return { id:crypto.randomUUID(), answers:{}, evidence:[], findings:[], documents:[], dialogue:[] };
+  return {
+    id:crypto.randomUUID(),
+    answers:{},
+    evidence:[],
+    findings:[],
+    documents:[],
+    dialogue:[],
+    analysisTokens:[],
+    correctionDecisions:[],
+    diagnosisToken:null
+  };
 }
 
 const state = {
@@ -67,7 +77,7 @@ function findingLabel(status) {
 }
 
 function updateDownloadState() {
-  $('download-excel').disabled = !(state.originalFile && state.originalBase64 && state.diagnosis.findings.length);
+  $('download-excel').disabled = !(state.originalFile && state.originalBase64 && state.diagnosis.findings.length && state.diagnosis.diagnosisToken);
 }
 
 function renderFindings(findings) {
@@ -116,7 +126,15 @@ function restoreSession() {
       return false;
     }
     state.turn = restored.turn;
-    state.diagnosis = { ...restored.diagnosis, evidence:[], documents:[], dialogue:restored.diagnosis.dialogue || [] };
+    state.diagnosis = {
+      ...restored.diagnosis,
+      evidence:[],
+      documents:[],
+      dialogue:restored.diagnosis.dialogue || [],
+      analysisTokens:[],
+      correctionDecisions:[],
+      diagnosisToken:null
+    };
     renderConversation();
     renderFindings(state.diagnosis.findings);
     $('session-status').textContent = '已恢复上次文字问诊。上传资料不会从本地草稿恢复，如需继续使用请重新选择文件。';
@@ -175,6 +193,7 @@ async function requestDiagnosis() {
       state.diagnosis.evidence.push(`ai_question:${result.question.key}:${reason}`);
     } else {
       state.diagnosis.findings = result.findings || [];
+      state.diagnosis.diagnosisToken = result.diagnosisToken || null;
       renderFindings(state.diagnosis.findings);
       appendDialogue('已形成当前阶段的经营诊断。你仍可以继续补充信息，我会据此重新判断。', 'ai');
     }
@@ -693,6 +712,9 @@ function resetUploadedFileState() {
   state.audit = null;
   clearPendingFileReview();
   state.diagnosis.documents = [];
+  state.diagnosis.analysisTokens = [];
+  state.diagnosis.correctionDecisions = [];
+  state.diagnosis.diagnosisToken = null;
   state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && (
     item.startsWith('file_analysis:') || item.startsWith('correction_decision:') || item.startsWith('file_review:') ||
     item.startsWith('report_fact:') || item.startsWith('report_issue:') || item.startsWith('report_review_confirmation:')
@@ -757,38 +779,13 @@ async function postFileAnalysis(file, contentBase64, { signal } = {}) {
   return data;
 }
 
-function correctionDecisionEvidence(pending) {
+function correctionDecisionSelections(pending) {
   const corrections = (pending?.result?.corrections || []).filter((item) => item.kind === 'calculation_error');
   return corrections.map((correction, index) => {
     const choice = pending.correctionDecisions[index];
     const decision = choice === 'accept' ? 'accepted' : 'kept_original';
-    return `correction_decision:${JSON.stringify({ label:correction.label, originalValue:correction.originalValue, correctedValue:correction.correctedValue, decision, explanation:correction.explanation || '' })}`;
+    return { correctionId:correction.id, decision };
   });
-}
-
-function unresolvedReviewEvidence(result) {
-  return (result?.corrections || []).filter((item) => item.kind !== 'calculation_error').map((item) => `file_review:${JSON.stringify({
-    kind:item.kind, label:item.label, originalValue:item.originalValue, explanation:item.explanation || '', evidence:Array.isArray(item.evidence) ? item.evidence : []
-  })}`);
-}
-
-function reportReviewEvidence(result) {
-  const evidence = [];
-  for (const fact of result.reportFacts || []) {
-    const compact = { id:fact.id, scope:fact.scope, metric:fact.metric, value:fact.value, unit:fact.unit || '', trusted:fact.trusted === true, source:fact.source || 'vision' };
-    if (compact.trusted) evidence.push(`report_fact:${JSON.stringify(compact)}`);
-    else evidence.push(`report_review_confirmation:${JSON.stringify({ ...compact, reason:'关键数据识别存在冲突或不确定，不能作为确定事实' })}`);
-  }
-  for (const issue of result.reportReview?.issues || []) {
-    const compact = {
-      kind:issue.kind, title:issue.title, scope:issue.scope, originalValue:issue.originalValue,
-      unit:issue.unit || '', explanation:issue.explanation || '', evidence:Array.isArray(issue.evidence) ? issue.evidence : [], source:issue.source || 'unknown'
-    };
-    if (issue.kind === 'calculation_error' && issue.source === 'program' && Object.prototype.hasOwnProperty.call(issue, 'correctedValue')) compact.correctedValue = issue.correctedValue;
-    if (issue.kind === 'needs_confirmation') evidence.push(`report_review_confirmation:${JSON.stringify(compact)}`);
-    else evidence.push(`report_issue:${JSON.stringify(compact)}`);
-  }
-  return evidence;
 }
 
 function diagnosisDocument(result) {
@@ -803,7 +800,7 @@ function diagnosisDocument(result) {
   };
 }
 
-function commitSuccessfulFileAnalysis(file, contentBase64, result, reviewEvidence = []) {
+function commitSuccessfulFileAnalysis(file, contentBase64, result, correctionDecisions = []) {
   if (result.document.type === 'excel') {
     state.originalFile = file;
     state.originalBase64 = contentBase64;
@@ -813,11 +810,11 @@ function commitSuccessfulFileAnalysis(file, contentBase64, result, reviewEvidenc
   }
   state.audit = result.audit;
   state.diagnosis.documents = [diagnosisDocument(result)];
-  state.diagnosis.evidence = state.diagnosis.evidence.filter((item) => !(typeof item === 'string' && (
-    item.startsWith('file_analysis:') || item.startsWith('correction_decision:') || item.startsWith('file_review:') ||
-    item.startsWith('report_fact:') || item.startsWith('report_issue:') || item.startsWith('report_review_confirmation:')
-  )));
-  state.diagnosis.evidence.push(`file_analysis:${JSON.stringify(result.summary)}`, ...reviewEvidence);
+  state.diagnosis.analysisTokens = result.analysisToken ? [result.analysisToken] : [];
+  state.diagnosis.correctionDecisions = correctionDecisions;
+  state.diagnosis.diagnosisToken = null;
+  state.diagnosis.findings = [];
+  renderFindings([]);
   $('file-status').textContent = fileStatusText(result);
   $('file-errors').textContent = '';
   updateDownloadState();
@@ -850,12 +847,10 @@ function confirmPendingFileReview() {
     return;
   }
   if ($('confirm-file').disabled) return;
-  const reviewEvidence = pending.mode === 'report'
-    ? reportReviewEvidence(pending.result)
-    : [...correctionDecisionEvidence(pending), ...unresolvedReviewEvidence(pending.result)];
+  const correctionDecisions = pending.mode === 'report' ? [] : correctionDecisionSelections(pending);
   state.pendingFileReview = null;
   hideFileReview();
-  commitSuccessfulFileAnalysis(pending.file, pending.contentBase64, pending.result, reviewEvidence);
+  commitSuccessfulFileAnalysis(pending.file, pending.contentBase64, pending.result, correctionDecisions);
   $('file-status').textContent = `${fileStatusText(pending.result)} 已确认资料检查结果。`;
 }
 
@@ -949,11 +944,14 @@ function base64ToBlob(contentBase64, mimeType) {
 }
 
 async function downloadReport() {
-  if (!state.originalFile || !state.originalBase64 || !state.diagnosis.findings.length) return;
+  if (!state.originalFile || !state.originalBase64 || !state.diagnosis.findings.length || !state.diagnosis.diagnosisToken) return;
   $('request-error').textContent = '';
   $('download-excel').disabled = true;
   try {
-    const result = await postJson('/api/report', { file:{ name:state.originalFile.name, contentBase64:state.originalBase64 }, audit:state.audit || { errors:[], anomalies:[], metrics:{} }, findings:state.diagnosis.findings });
+    const result = await postJson('/api/report', {
+      file:{ name:state.originalFile.name, contentBase64:state.originalBase64 },
+      diagnosisToken:state.diagnosis.diagnosisToken
+    });
     const blob = base64ToBlob(result.contentBase64, result.mimeType);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

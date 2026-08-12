@@ -194,6 +194,49 @@ function normalizeUncertainSegments(value) {
   })).filter((segment) => segment.text);
 }
 
+function deferredImageDocument(name) {
+  return {
+    document:{
+      name,
+      source:{ kind:'upload', name },
+      type:'image',
+      structured:false,
+      confidence:0,
+      text:'',
+      truncated:false,
+      uncertainSegments:[],
+      warnings:[],
+      recognitionDeferred:true
+    },
+    workbook:null
+  };
+}
+
+export async function parseImageDocument({ name, buffer }, deps = {}) {
+  const onProgress = deps.onProgress;
+  reportProgress(onProgress, 'ocr', 28, '准备图片文字识别', 'preparing');
+  const ocr = deps.imageOcr || defaultImageOcr;
+  const extracted = await ocr(buffer, (message) => {
+    reportProgress(onProgress, 'ocr', mapOcrProgress(message), ocrProgressMessage(message?.status), ocrProgressStage(message?.status));
+  });
+  reportProgress(onProgress, 'ocr', 88, '文字识别完成，正在整理识别结果', 'finalizing');
+  const confidence = Number.isFinite(extracted.confidence) ? Math.max(0, Math.min(1, extracted.confidence)) : 0;
+  const uncertainSegments = normalizeUncertainSegments(extracted.uncertainSegments);
+  const initialWarnings = [];
+  if (confidence < 0.65) initialWarnings.push('图片文字识别置信度较低，请人工确认关键数字');
+  for (const segment of uncertainSegments) {
+    const pct = Math.round(segment.confidence * 100);
+    const context = segment.context && segment.context !== segment.text ? `；所在内容：${segment.context}` : '';
+    initialWarnings.push(`需确认“${segment.text}”（局部识别置信度 ${pct}%${context}）`);
+  }
+  if (!extracted.text) initialWarnings.push('图片未识别到可用文字');
+  const bounded = boundExtractedText(extracted.text, initialWarnings);
+  return {
+    document:{ name, source:{kind:'upload',name}, type:'image', structured:false, confidence, text:bounded.text, truncated:bounded.truncated, uncertainSegments, warnings:bounded.warnings },
+    workbook:null
+  };
+}
+
 export async function parseBusinessDocument({ name, buffer }, deps = {}) {
   const extension = extensionOf(name);
   const onProgress = deps.onProgress;
@@ -241,27 +284,8 @@ export async function parseBusinessDocument({ name, buffer }, deps = {}) {
     };
   }
 
-  reportProgress(onProgress, 'ocr', 28, '准备图片文字识别', 'preparing');
-  const ocr = deps.imageOcr || defaultImageOcr;
-  const extracted = await ocr(buffer, (message) => {
-    reportProgress(onProgress, 'ocr', mapOcrProgress(message), ocrProgressMessage(message?.status), ocrProgressStage(message?.status));
-  });
-  reportProgress(onProgress, 'ocr', 88, '文字识别完成，正在整理识别结果', 'finalizing');
-  const confidence = Number.isFinite(extracted.confidence) ? Math.max(0, Math.min(1, extracted.confidence)) : 0;
-  const uncertainSegments = normalizeUncertainSegments(extracted.uncertainSegments);
-  const initialWarnings = [];
-  if (confidence < 0.65) initialWarnings.push('图片文字识别置信度较低，请人工确认关键数字');
-  for (const segment of uncertainSegments) {
-    const pct = Math.round(segment.confidence * 100);
-    const context = segment.context && segment.context !== segment.text ? `；所在内容：${segment.context}` : '';
-    initialWarnings.push(`需确认“${segment.text}”（局部识别置信度 ${pct}%${context}）`);
-  }
-  if (!extracted.text) initialWarnings.push('图片未识别到可用文字');
-  const bounded = boundExtractedText(extracted.text, initialWarnings);
-  return {
-    document:{ name, source:{kind:'upload',name}, type:'image', structured:false, confidence, text:bounded.text, truncated:bounded.truncated, uncertainSegments, warnings:bounded.warnings },
-    workbook:null
-  };
+  if (deps.deferImageOcr === true) return deferredImageDocument(name);
+  return parseImageDocument({ name, buffer }, deps);
 }
 
 export const supportedBusinessDocumentExtensions = Object.freeze([...SUPPORTED]);

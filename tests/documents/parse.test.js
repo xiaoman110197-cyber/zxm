@@ -103,6 +103,20 @@ test('marks low-confidence image OCR as uncertain instead of reliable fact', asy
   assert.ok(result.document.warnings.some((warning) => /置信度|确认/.test(warning)));
 });
 
+test('deferred image parsing validates the image without starting local OCR', async () => {
+  const buffer = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1]);
+  let localCalls = 0;
+  const result = await parseBusinessDocument({ name:'报表.png', buffer }, {
+    deferImageOcr:true,
+    imageOcr:async () => { localCalls += 1; return { text:'不应运行', confidence:1 }; }
+  });
+
+  assert.equal(localCalls, 0);
+  assert.equal(result.document.type, 'image');
+  assert.equal(result.document.recognitionDeferred, true);
+  assert.equal(result.document.text, '');
+});
+
 test('rejects an extension whose file signature does not match', async () => {
   await assert.rejects(
     () => parseBusinessDocument({ name:'伪造.pdf', buffer:Buffer.from('not a pdf') }, deps),

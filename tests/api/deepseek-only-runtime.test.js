@@ -47,9 +47,9 @@ test('same DeepSeek provider performs a separate review pass', async () => {
         impact:'利润判断失真', action:'核对数据', metric:'毛利率'
       }] };
     },
-    review:async () => {
+    review:async ({ findings }) => {
       reviewCalls += 1;
-      return { reviews:[{ title:'毛利异常', verdict:'agree', reason:'证据一致', missingEvidence:[] }] };
+      return { reviews:[{ id:findings[0].id, title:'毛利异常', verdict:'agree', reason:'证据一致', missingEvidence:[] }] };
     }
   };
   const res = mockRes();

@@ -25,5 +25,6 @@ test('DeepSeek provider structures OCR text with JSON output and non-thinking mo
   assert.deepEqual(body.response_format, { type:'json_object' });
   assert.match(body.messages[0].content, /不得生成 correctedValue/);
   assert.match(body.messages[0].content, /sourceText/);
+  assert.match(body.messages[0].content, /表头.*数据行|数据行.*表头/);
   assert.deepEqual(result, { facts:[], candidates:[], confirmations:[] });
 });

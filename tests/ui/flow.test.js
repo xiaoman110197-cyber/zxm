@@ -116,12 +116,22 @@ test('non-Excel uploads do not enable Excel report reconstruction', () => {
   assert.match(js, /document\.type\s*===\s*['"]excel['"]/);
 });
 
-test('accepted or retained calculation corrections are recorded as diagnosis evidence without rewriting source text', () => {
-  assert.match(js, /correction_decision:/);
+test('accepted or retained corrections send only a server correction id and user decision', () => {
+  assert.match(js, /correctionDecisions/);
   assert.match(js, /accepted|kept_original/);
-  assert.match(js, /originalValue/);
-  assert.match(js, /correctedValue/);
+  assert.match(js, /correctionId/);
+  const start = js.indexOf('function correctionDecisionSelections');
+  const end = js.indexOf('\nfunction ', start + 10);
+  const selectionFunction = js.slice(start, end > start ? end : undefined);
+  assert.doesNotMatch(selectionFunction, /originalValue|correctedValue|explanation|evidence/);
+  assert.doesNotMatch(js, /`correction_decision:/);
   assert.doesNotMatch(js, /pending\.result\.document\.text\s*=/);
+});
+
+test('diagnosis and report requests carry server tokens instead of browser audit claims', () => {
+  assert.match(js, /diagnosisToken/);
+  assert.match(js, /analysisTokens/);
+  assert.match(js, /postJson\('\/api\/report', \{[\s\S]*file:[\s\S]*diagnosisToken/);
 });
 
 test('layout is mobile-first and avoids fixed desktop width', () => {

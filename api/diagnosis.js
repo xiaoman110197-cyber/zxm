@@ -3,6 +3,9 @@ import { createDeepSeekProvider } from '../src/ai/providers.js';
 import { crossReviewDiagnosis } from '../src/ai/cross-review.js';
 import { boundDiagnosisContext } from '../src/ai/context.js';
 import { checkBurstLimit } from '../src/http/guard.js';
+import { assembleTrustedDiagnosis } from '../src/ai/trusted-context.js';
+import { signTrustToken } from '../src/security/trust-token.js';
+import { resolveTrustSecret } from '../src/config/runtime.js';
 
 const FINDING_STATUSES = new Set(['confirmed', 'probable', 'hypothesis']);
 const PRIORITIES = new Set(['P0', 'P1', 'P2']);
@@ -20,6 +23,16 @@ export function validateAiFinding(finding) {
 }
 
 function normalizeAiResult(result) {
+  if (result && typeof result === 'object' && result.mode === 'finding') {
+    return {
+      ...result,
+      findings:Array.isArray(result.findings) ? result.findings.map((finding) => {
+        if (!finding || typeof finding !== 'object') return finding;
+        const { deterministic:_deterministic, crossModelStatus:_crossModelStatus, review:_review, ...safe } = finding;
+        return safe;
+      }) : result.findings
+    };
+  }
   if (!result || typeof result !== 'object' || result.mode !== 'question') return result;
 
   if (typeof result.question === 'string' && result.question.trim()) {
@@ -90,6 +103,11 @@ function injectedOrRuntime(deps, key, runtimeValue) {
   return Object.prototype.hasOwnProperty.call(deps, key) ? deps[key] : runtimeValue;
 }
 
+function usableInjectedTrustSecret(secret) {
+  if (Buffer.isBuffer(secret)) return secret.length > 0;
+  return typeof secret === 'string' && Boolean(secret.trim());
+}
+
 function headerValue(req, name) {
   const value = req.headers?.[name];
   if (Array.isArray(value)) return value[0] || '';
@@ -112,13 +130,13 @@ function applyBurstGuard(req, res, requestId, deps) {
   return jsonError(res, 429, '请求较频繁，请稍后再试', requestId);
 }
 
-function singleModel(result, status = 'single_model') {
+function singleModel(result, status = 'review_unavailable') {
   if (result.mode !== 'finding') return result;
   return {
     ...result,
     findings:result.findings.map((finding) => ({
       ...finding,
-      crossModelStatus:finding.deterministic ? 'program_fact' : status
+      crossModelStatus:status
     }))
   };
 }
@@ -136,9 +154,23 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
   const diagnosis = req.body?.diagnosis;
   if (!diagnosis || typeof diagnosis !== 'object' || !diagnosis.id) return jsonError(res, 400, 'diagnosis is required', requestId);
+  const trust = resolveTrustSecret(deps.env || process.env);
+  const productionTrustRequired = deps.requireTrustToken === true || process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL_ENV);
+  if (productionTrustRequired && !usableInjectedTrustSecret(deps.trustSecret) && !trust.secret) {
+    return jsonError(res, 503, '服务端证据签名配置不可用', requestId);
+  }
   const limited = applyBurstGuard(req, res, requestId, deps);
   if (limited) return limited;
-  const providerDiagnosis = boundDiagnosisContext(diagnosis);
+  let providerDiagnosis;
+  try {
+    providerDiagnosis = boundDiagnosisContext(assembleTrustedDiagnosis(diagnosis, {
+      secret:deps.trustSecret,
+      env:deps.env,
+      now:deps.trustNow
+    }));
+  } catch {
+    return jsonError(res, 422, '诊断资料验证失败，请重新分析资料', requestId);
+  }
 
   const runtime = buildRuntimeProviders();
   const primaryProvider = injectedOrRuntime(deps, 'primaryProvider', runtime.primaryProvider);
@@ -154,7 +186,10 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
     if (result.mode === 'finding') {
       if (reviewerProvider?.review) {
         try {
-          result = await crossReviewDiagnosis(result, { reviewer:(payload) => reviewerProvider.review(payload) });
+          result = await crossReviewDiagnosis(result, {
+            reviewer:(payload) => reviewerProvider.review(payload),
+            shouldReview:() => true
+          });
         } catch (error) {
           logDiagnosisError(`reviewer-provider:${reviewerProvider?.name || 'deepseek'}`, error, requestId, startedAt);
           result = singleModel(result, 'review_unavailable');
@@ -162,11 +197,31 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
       } else {
         result = singleModel(result);
       }
+      result = {
+        ...result,
+        findings:boundDiagnosisContext({ id:'result', answers:{}, evidence:[], documents:[], findings:result.findings }).findings
+      };
       validateAiResult(result);
     }
 
     console.info('[diagnosis]', requestId, 'complete', primaryProvider?.name || 'deepseek', Date.now() - startedAt);
-    return res.status(200).json({ ...result, requestId });
+    let diagnosisToken = null;
+    if (result.mode === 'finding') {
+      try {
+        diagnosisToken = signTrustToken('diagnosis', {
+          findings:result.findings,
+          sourceDigests:providerDiagnosis.sourceDigests || []
+        }, {
+          secret:deps.trustSecret,
+          env:deps.env,
+          now:deps.trustNow
+        });
+      } catch (error) {
+        const production = deps.requireTrustToken === true || process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL_ENV);
+        if (production) throw error;
+      }
+    }
+    return res.status(200).json({ ...result, diagnosisToken, requestId });
   } catch (error) {
     logDiagnosisError(`primary-provider:${primaryProvider?.name || 'deepseek'}`, error, requestId, startedAt);
     return jsonError(res, 502, 'AI diagnosis failed', requestId);
