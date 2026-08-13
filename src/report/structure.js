@@ -175,6 +175,67 @@ function normalizeConfirmation(raw) {
   };
 }
 
+function decodeHtmlCell(value) {
+  return String(value || '')
+    .replace(/<br\s*\/?>/giu, ' ')
+    .replace(/<[^>]+>/gu, '')
+    .replace(/&nbsp;/giu, ' ')
+    .replace(/&amp;/giu, '&')
+    .replace(/&lt;/giu, '<')
+    .replace(/&gt;/giu, '>')
+    .replace(/&#39;/giu, "'")
+    .replace(/&quot;/giu, '"')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function splitMetricAndUnit(header) {
+  const normalized = decodeHtmlCell(header);
+  const match = normalized.match(/^(.+?)[（(]([^）)]+)[）)]$/u);
+  if (!match) return { metric:normalized, unit:'' };
+  return { metric:match[1].trim(), unit:match[2].trim() };
+}
+
+function numericCell(value) {
+  const normalized = decodeHtmlCell(value).replace(/,/gu, '');
+  const match = normalized.match(/^(-?\d+(?:\.\d+)?)\s*(%|％)?$/u);
+  if (!match) return null;
+  return { value:Number(match[1]), suffix:match[2] ? '%' : '' };
+}
+
+function extractHtmlTableFacts(text, source) {
+  if (source !== 'qianfan_ocr' || !/<table\b/iu.test(text)) return [];
+  const facts = [];
+  for (const tableMatch of text.matchAll(/<table\b[^>]*>([\s\S]*?)<\/table>/giu)) {
+    const rows = [...tableMatch[1].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/giu)]
+      .map((row) => [...row[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/giu)].map((cell) => decodeHtmlCell(cell[1])));
+    if (rows.length < 2 || rows[0].length < 2) continue;
+    const headers = rows[0];
+    for (const row of rows.slice(1)) {
+      const scope = clean(row[0], 120);
+      if (!scope) continue;
+      const rowCitation = headers.map((header, index) => `${header}：${row[index] ?? ''}`).join('；');
+      for (let index = 1; index < Math.min(headers.length, row.length); index += 1) {
+        const parsed = numericCell(row[index]);
+        if (!parsed) continue;
+        const { metric, unit:headerUnit } = splitMetricAndUnit(headers[index]);
+        if (!metric) continue;
+        facts.push({
+          id:`report_fact_${facts.length + 1}`,
+          scope,
+          metric,
+          value:parsed.value,
+          unit:parsed.suffix || headerUnit,
+          sourceText:rowCitation,
+          confidence:0.99,
+          source:'qianfan_ocr_table'
+        });
+      }
+    }
+  }
+  return facts.slice(0, 160);
+}
+
 export async function structureReportText({ text, source = 'qianfan_ocr', degraded = false } = {}, { provider } = {}) {
   if (typeof text !== 'string' || !text.trim()) throw new TypeError('OCR text is required');
   if (!provider?.structureReport) throw new TypeError('report structure provider is required');
@@ -195,6 +256,8 @@ export async function structureReportText({ text, source = 'qianfan_ocr', degrad
   const confirmations = Array.isArray(raw?.confirmations)
     ? raw.confirmations.slice(0, 40).map(normalizeConfirmation).filter(Boolean)
     : [];
+
+  if (!facts.length && !degraded) facts.push(...extractHtmlTableFacts(text, source));
 
   return { facts, candidates, confirmations };
 }

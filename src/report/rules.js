@@ -306,6 +306,9 @@ function summaryGrossMarginIssues(facts) {
   const totalCost = findFact(summaryFacts, [...TOTAL_COST_METRICS, ...COST_METRICS]);
   const totalAmounts = comparableAmounts(totalRevenue, totalCost);
   if (totalAmounts) {
+    // A regular 毛利率 on a summary row is already handled by grossMarginIssues.
+    // Keep this summary-specific rule for explicitly labelled 总毛利率 only.
+    if (summary.metric !== '总毛利率') return [];
     const [revenueAmount, costAmount] = totalAmounts;
     if (revenueAmount.base > 0 && costAmount.base >= 0) {
       const expected = round((revenueAmount.base - costAmount.base) / revenueAmount.base * 100, 2);

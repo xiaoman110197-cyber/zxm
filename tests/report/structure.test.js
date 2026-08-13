@@ -131,3 +131,33 @@ test('server generates unique fact ids and remaps candidates away from duplicate
   assert.deepEqual(result.facts.map((fact) => fact.id), ['report_fact_1','report_fact_2']);
   assert.deepEqual(result.candidates[0].relatedFactIds, ['report_fact_1','report_fact_2']);
 });
+
+test('extracts independently checkable facts from DeepSeek OCR HTML tables when the AI structurer returns no facts', async () => {
+  const text = [
+    '<table><tr><td>区域</td><td>营业额（万元）</td><td>营业成本（万元）</td><td>毛利（万元）</td><td>毛利率</td><td>订单量（单）</td><td>客单价（元）</td></tr>',
+    '<tr><td>华南</td><td>280</td><td>190</td><td>120</td><td>42.9%</td><td>3500</td><td>800</td></tr>',
+    '<tr><td>华北</td><td>250</td><td>160</td><td>90</td><td>28.0%</td><td>2500</td><td>1000</td></tr>',
+    '<tr><td>合计</td><td>1000</td><td>655</td><td>375</td><td>37.5%</td><td>11500</td><td>870</td></tr></table>'
+  ].join('');
+  const provider = { async structureReport() { return { facts:[], candidates:[], confirmations:[] }; } };
+
+  const result = await structureReportText({ text, source:'qianfan_ocr' }, { provider });
+
+  assert.equal(result.facts.length, 18);
+  assert.deepEqual(
+    result.facts.filter((fact) => fact.scope === '华南').map((fact) => [fact.metric, fact.value, fact.unit]),
+    [
+      ['营业额',280,'万元'], ['营业成本',190,'万元'], ['毛利',120,'万元'],
+      ['毛利率',42.9,'%'], ['订单量',3500,'单'], ['客单价',800,'元']
+    ]
+  );
+  assert.equal(result.facts.every((fact) => fact.source === 'qianfan_ocr_table'), true);
+  assert.deepEqual(
+    inspectReportFacts(result.facts).map((issue) => `${issue.scope}:${issue.title}`),
+    [
+      '华南:毛利计算错误', '华南:毛利率计算错误',
+      '华北:毛利率计算错误',
+      '合计:毛利计算错误', '合计:毛利率计算错误'
+    ]
+  );
+});
