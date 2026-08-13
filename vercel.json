@@ -9,7 +9,9 @@
     },
     "api/diagnosis.js": { "maxDuration": 45 },
     "api/report.js": { "maxDuration": 45 },
-    "api/health.js": { "maxDuration": 10 }
+    "api/health.js": { "maxDuration": 10 },
+    "api/admin-login.js": { "maxDuration": 10 },
+    "api/admin-ops.js": { "maxDuration": 10 }
   },
   "headers": [
     {

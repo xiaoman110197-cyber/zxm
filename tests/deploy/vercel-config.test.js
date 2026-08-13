@@ -32,3 +32,8 @@ test('npm ci lockfile includes the Linux canvas binary required by PDF parsing',
 test('serverless api directory remains available alongside static output', () => {
   assert.ok(!vercel.functions || Object.keys(vercel.functions).every(key => key.startsWith('api/')));
 });
+
+test('administrator API functions have bounded durations', () => {
+  assert.equal(vercel.functions?.['api/admin-login.js']?.maxDuration, 10);
+  assert.equal(vercel.functions?.['api/admin-ops.js']?.maxDuration, 10);
+});
