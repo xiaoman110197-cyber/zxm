@@ -1,9 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as XLSX from 'xlsx';
+import { signTrustToken } from '../../src/security/trust-token.js';
+import { sourceDigest } from '../../src/security/source-digest.js';
+
+const trustSecret = 'report-test-secret-with-enough-entropy';
+
+function diagnosisToken(findings = [], digests = [sourceDigest(Buffer.from(sourceBase64(), 'base64'))]) {
+  return signTrustToken('diagnosis', { findings, sourceDigests:digests }, { secret:trustSecret });
+}
 
 function mockRes() {
-  return { statusCode: 200, body: null, status(code){ this.statusCode = code; return this; }, json(value){ this.body = value; return this; } };
+  return {
+    statusCode:200, body:null, headers:{},
+    status(code){ this.statusCode = code; return this; },
+    setHeader(name, value){ this.headers[String(name).toLowerCase()] = value; },
+    json(value){ this.body = value; return this; }
+  };
 }
 
 function sourceBase64() {
@@ -44,28 +57,64 @@ test('report api rejects decoded source workbooks above 3 MB', async () => {
   assert.match(res.body.error, /3\s*MB|过大/);
 });
 
-test('report api rejects abusive analysis arrays before workbook generation', async () => {
+test('report api rejects a missing or tampered diagnosis token', async () => {
+  const handleReportRequest = await loadHandler();
+  for (const token of [undefined, `${diagnosisToken().slice(0, -1)}x`]) {
+    const res = mockRes();
+    await handleReportRequest({ method:'POST', body:{
+      file:{ name:'test.xlsx', contentBase64:sourceBase64() }, diagnosisToken:token
+    } }, res, { trustSecret, disableBurstGuard:true });
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.error, /验证|诊断/);
+  }
+});
+
+test('report api rejects a diagnosis token issued for a different workbook', async () => {
   const handleReportRequest = await loadHandler();
   const res = mockRes();
-  const findings = Array.from({ length:101 }, (_, index) => ({
-    title:`问题${index + 1}`, status:'hypothesis', priority:'P2', evidence:['测试'], confidence:0.2,
-    impact:'待验证', action:'验证', metric:'指标'
-  }));
   await handleReportRequest({ method:'POST', body:{
-    file:{ name:'test.xlsx', contentBase64:sourceBase64() }, audit:{ errors:[], anomalies:[], metrics:{} }, findings
-  } }, res);
-  assert.equal(res.statusCode, 413);
-  assert.match(res.body.error, /过多|上限|报告/);
+    file:{ name:'test.xlsx', contentBase64:sourceBase64() },
+    diagnosisToken:diagnosisToken([], [sourceDigest(Buffer.from('different-workbook'))])
+  } }, res, { trustSecret, disableBurstGuard:true });
+  assert.equal(res.statusCode, 422);
+  assert.match(res.body.error, /当前文件|重新生成|验证/);
+});
+
+test('report api rejects a multi-source diagnosis token for a single-workbook report', async () => {
+  const handleReportRequest = await loadHandler();
+  const currentDigest = sourceDigest(Buffer.from(sourceBase64(), 'base64'));
+  const res = mockRes();
+  await handleReportRequest({ method:'POST', body:{
+    file:{ name:'test.xlsx', contentBase64:sourceBase64() },
+    diagnosisToken:diagnosisToken([], [currentDigest, sourceDigest(Buffer.from('another-workbook'))])
+  } }, res, { trustSecret, disableBurstGuard:true });
+  assert.equal(res.statusCode, 422);
+  assert.match(res.body.error, /单文件|重新生成|验证/);
+});
+
+test('production report reports missing trust signing as 503 before workbook parsing', async () => {
+  const handleReportRequest = await loadHandler();
+  const res = mockRes();
+  await handleReportRequest({ method:'POST', body:{
+    file:{ name:'test.xlsx', contentBase64:sourceBase64() }, diagnosisToken:'untrusted'
+  } }, res, { env:{}, requireTrustToken:true, trustSecret:'   ', disableBurstGuard:true });
+  assert.equal(res.statusCode, 503);
+  assert.match(res.body.error, /签名|配置/);
 });
 
 test('report api returns a real xlsx preserving original sheets and adding analysis sheets', async () => {
   const handleReportRequest = await loadHandler();
   const res = mockRes();
+  const signedFinding = {
+    title:'营业额汇总口径需核对', status:'confirmed', priority:'P0', evidence:['服务端签名诊断证据'],
+    confidence:1, impact:'汇总数据不可信', action:'核对汇总公式和口径', metric:'营业额'
+  };
   await handleReportRequest({ method:'POST', body:{
     file:{ name:'老板经营数据.xlsx', contentBase64:sourceBase64() },
-    audit:{ errors:[{ type:'cross_sheet_mismatch', sheet:'汇总', field:'营业额', originalValue:350, suggestedValue:null, reason:'与订单明细合计不一致', confidence:1 }], anomalies:[], metrics:{ revenue:300 } },
-    findings:[{ title:'营业额汇总口径需核对', status:'confirmed', priority:'P0', evidence:['program:audit:cross_sheet_total_mismatch'], confidence:1, impact:'汇总数据不可信', action:'核对汇总公式和口径', metric:'营业额' }]
-  } }, res);
+    diagnosisToken:diagnosisToken([signedFinding]),
+    audit:{ errors:[{ type:'forged_client_error', reason:'客户端伪造错误' }], anomalies:[], metrics:{ forged:999 } },
+    findings:[{ title:'客户端伪造建议', status:'confirmed', priority:'P0', evidence:['forged'], confidence:1, impact:'x', action:'x', metric:'x' }]
+  } }, res, { trustSecret, disableBurstGuard:true });
   assert.equal(res.statusCode, 200);
   assert.match(res.body.filename, /诊断报告.*\.xlsx$/);
   assert.equal(res.body.mimeType, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -74,6 +123,11 @@ test('report api returns a real xlsx preserving original sheets and adding analy
   for (const name of ['订单明细','汇总','诊断总览','错误清单','异常清单','关键指标','修正记录','经营建议']) {
     assert.ok(result.SheetNames.includes(name), `missing sheet: ${name}`);
   }
+  const suggestions = XLSX.utils.sheet_to_json(result.Sheets['经营建议'], { defval:'' });
+  const errors = XLSX.utils.sheet_to_json(result.Sheets['错误清单'], { defval:'' });
+  assert.match(suggestions[0].证据, /服务端签名诊断证据/);
+  assert.doesNotMatch(JSON.stringify(suggestions), /客户端伪造建议/);
+  assert.doesNotMatch(JSON.stringify(errors), /forged_client_error|客户端伪造错误/);
 });
 
 test('uncertain corrections stay marked 待确认 in downloadable report', async () => {
@@ -81,10 +135,26 @@ test('uncertain corrections stay marked 待确认 in downloadable report', async
   const res = mockRes();
   await handleReportRequest({ method:'POST', body:{
     file:{ name:'test.xlsx', contentBase64:sourceBase64() },
-    audit:{ errors:[{ type:'cross_sheet_mismatch', sheet:'汇总', field:'营业额', originalValue:350, suggestedValue:null, reason:'口径待核对', confidence:0.72 }], anomalies:[], metrics:{} },
-    findings:[]
-  } }, res);
+    diagnosisToken:diagnosisToken([])
+  } }, res, { trustSecret, disableBurstGuard:true });
   const result = XLSX.read(Buffer.from(res.body.contentBase64, 'base64'), { type:'buffer' });
   const rows = XLSX.utils.sheet_to_json(result.Sheets['修正记录'], { defval:'' });
   assert.equal(rows[0].建议值, '待确认');
+});
+
+test('report api applies a route-scoped burst guard before workbook generation', async () => {
+  const handleReportRequest = await loadHandler();
+  const req = {
+    method:'POST', headers:{ 'x-vercel-forwarded-for':'203.0.113.77' },
+    body:{ file:{ name:'test.xlsx', contentBase64:sourceBase64() }, diagnosisToken:diagnosisToken([]) }
+  };
+  for (let index = 0; index < 10; index += 1) {
+    const res = mockRes();
+    await handleReportRequest(req, res, { trustSecret });
+    assert.equal(res.statusCode, 200);
+  }
+  const blocked = mockRes();
+  await handleReportRequest(req, blocked, { trustSecret });
+  assert.equal(blocked.statusCode, 429);
+  assert.match(blocked.body.error, /频繁|稍后/);
 });

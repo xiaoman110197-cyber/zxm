@@ -20,8 +20,9 @@ test('image report review must be confirmed before trusted facts enter diagnosis
   assert.match(js, /renderReportReview/);
   assert.match(js, /confirmPendingFileReview/);
   assert.match(js, /document\?*\.type\s*===\s*['"]image['"]/);
-  assert.match(js, /report_fact:/);
-  assert.match(js, /report_review_confirmation:/);
+  assert.match(js, /analysisTokens/);
+  assert.doesNotMatch(js, /`report_fact:/);
+  assert.doesNotMatch(js, /`report_review_confirmation:/);
 
   assert.match(
     js,
@@ -29,7 +30,7 @@ test('image report review must be confirmed before trusted facts enter diagnosis
   );
   assert.match(
     js,
-    /function confirmPendingFileReview[\s\S]*?commitSuccessfulFileAnalysis\(pending\.file, pending\.contentBase64, pending\.result, reviewEvidence\)/
+    /function confirmPendingFileReview[\s\S]*?commitSuccessfulFileAnalysis\(pending\.file, pending\.contentBase64, pending\.result, correctionDecisions\)/
   );
   assert.match(
     js,

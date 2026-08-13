@@ -129,14 +129,13 @@ function boundDocument(document) {
   return result;
 }
 
-function boundFinding(finding) {
+export function boundFinding(finding) {
   if (!finding || typeof finding !== 'object') return null;
   const result = {};
   for (const key of ['title','status','priority','impact','action','metric','crossModelStatus']) {
     if (typeof finding[key] === 'string') result[key] = clipString(finding[key], key === 'action' ? 2000 : 1000);
   }
   if (typeof finding.confidence === 'number' && Number.isFinite(finding.confidence)) result.confidence = finding.confidence;
-  if (typeof finding.deterministic === 'boolean') result.deterministic = finding.deterministic;
   result.evidence = boundEvidence(finding.evidence, MAX_FINDING_EVIDENCE);
   if (Array.isArray(finding.missingEvidence)) result.missingEvidence = boundEvidence(finding.missingEvidence, 20);
   return result;
@@ -162,5 +161,8 @@ export function boundDiagnosisContext(diagnosis) {
   };
   const dialogue = boundDialogue(diagnosis.dialogue);
   if (dialogue) result.dialogue = dialogue;
+  if (Array.isArray(diagnosis.sourceDigests)) {
+    result.sourceDigests = diagnosis.sourceDigests.filter((value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)).slice(0, 3);
+  }
   return result;
 }

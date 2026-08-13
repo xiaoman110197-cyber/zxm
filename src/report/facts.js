@@ -27,9 +27,9 @@ function valueKey(value) {
   return `s:${normalized(value)}`;
 }
 
-function dedupeFacts(visionFacts) {
+function dedupeFacts(structuredFacts) {
   const chosen = new Map();
-  for (const fact of visionFacts || []) {
+  for (const fact of structuredFacts || []) {
     if (!fact || typeof fact !== 'object') continue;
     const scope = clean(fact.scope);
     const metric = clean(fact.metric);
@@ -115,24 +115,34 @@ function confirmationFor(fact, reason) {
   };
 }
 
-export function buildReportFacts({ visionFacts = [], ocrDocument = {} } = {}) {
-  const facts = dedupeFacts(visionFacts);
+export function buildReportFacts({ structuredFacts, corroborationText, degraded = false, visionFacts, ocrDocument } = {}) {
+  const inputFacts = Array.isArray(structuredFacts) ? structuredFacts : (visionFacts || []);
+  const evidenceText = typeof corroborationText === 'string' ? corroborationText : (ocrDocument?.text || '');
+  const facts = dedupeFacts(inputFacts);
   const confirmations = [];
   const seen = new Set();
 
   for (const fact of facts) {
     if (!KEY_METRICS.has(fact.metric)) continue;
-    const ocrValue = findOcrValueForFact(fact, ocrDocument.text || '');
-    if (ocrValue && !equivalentValue(fact, ocrValue)) {
-      const item = confirmationFor(fact, '原图视觉读取与文字识别结果不一致，请核对这个关键数据。');
+    const corroboratedValue = findOcrValueForFact(fact, evidenceText);
+    if (corroboratedValue && !equivalentValue(fact, corroboratedValue)) {
+      const item = confirmationFor(fact, '关键数据在识别证据中不一致，请核对原报表。');
       if (!seen.has(item.id)) {
         confirmations.push(item);
         seen.add(item.id);
       }
       continue;
     }
-    if (!ocrValue && Number(fact.confidence) < 0.65) {
-      const item = confirmationFor(fact, '这个关键数据在原图中读取不够清楚，请核对后再用于结论。');
+    if (degraded && Number(fact.confidence) < 0.65) {
+      const item = confirmationFor(fact, '本次为降级识别，这个关键数据需要核对原报表后再用于确定结论。');
+      if (!seen.has(item.id)) {
+        confirmations.push(item);
+        seen.add(item.id);
+      }
+      continue;
+    }
+    if (!corroboratedValue && Number(fact.confidence) < 0.65) {
+      const item = confirmationFor(fact, '这个关键数据在识别证据中不够清楚，请核对后再用于结论。');
       if (!seen.has(item.id)) {
         confirmations.push(item);
         seen.add(item.id);

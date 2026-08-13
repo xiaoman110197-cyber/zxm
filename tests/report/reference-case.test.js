@@ -4,10 +4,10 @@ import { inspectReportFacts } from '../../src/report/rules.js';
 import { buildReportReview } from '../../src/report/issues.js';
 
 function fact(id, scope, metric, value, unit = '') {
-  return { id, scope, metric, value, unit, sourceText:`${metric} ${value}${unit}`, confidence:0.99, source:'vision' };
+  return { id, scope, metric, value, unit, sourceText:`${scope} ${metric} ${value}${unit}`, confidence:0.99, source:'qianfan_ocr_ai' };
 }
 
-test('screenshot-style report returns concrete issues without fabricated corrections', () => {
+test('reference screenshot produces all nine required outcomes without fabricated corrections', () => {
   const facts = [
     fact('hn-r','华南大区','营收',9800,'万元'),
     fact('hn-c','华南大区','营业成本',6100,'万元'),
@@ -33,36 +33,50 @@ test('screenshot-style report returns concrete issues without fabricated correct
 
   const review = buildReportReview({
     ruleIssues:inspectReportFacts(facts, { now:new Date('2026-08-10T00:00:00Z') }),
-    visionCandidates:[],
+    aiCandidates:[],
     confirmations:[],
-    vision:{ available:true }
+    recognition:{ mode:'cloud_ocr_deepseek', completeReview:true, provider:'qianfan', model:'deepseek-ocr' }
   });
 
   const byTitle = new Map(review.issues.map((item) => [item.title, item]));
 
+  // 1. 华南 9800 / 6100 / 85% -> only the program may emit 37.76%.
   assert.equal(byTitle.get('毛利率计算错误')?.correctedValue, 37.76);
   assert.equal(byTitle.get('毛利率计算错误')?.kind, 'calculation_error');
+  assert.equal(byTitle.get('毛利率计算错误')?.source, 'program');
 
+  // 2. Negative operating cost is an anomaly, not an invented replacement.
   assert.equal(byTitle.get('营业成本出现负数')?.kind, 'anomaly');
   assert.equal('correctedValue' in byTitle.get('营业成本出现负数'), false);
 
+  // 3. Net profit above revenue is an anomaly only.
   assert.equal(byTitle.get('净利润高于营业收入')?.kind, 'anomaly');
   assert.equal('correctedValue' in byTitle.get('净利润高于营业收入'), false);
 
+  // 4-6. Impossible attendance/headcount/turnover values are deterministic logic errors with no invented replacement.
   assert.equal(byTitle.get('出勤率超出 0%–100% 范围')?.kind, 'logic_error');
   assert.equal(byTitle.get('期末人数不能为负数')?.kind, 'logic_error');
   assert.equal(byTitle.get('离职率不能为负数')?.kind, 'logic_error');
 
+  // 7. Future production date may represent forecast context, so it remains an anomaly.
   assert.equal(byTitle.get('生产日期在未来')?.kind, 'anomaly');
   assert.equal('correctedValue' in byTitle.get('生产日期在未来'), false);
 
+  // 8. Expiry before production is a logic error, but the correct date is unknown.
   assert.equal(byTitle.get('失效日期早于生产日期')?.kind, 'logic_error');
   assert.equal('correctedValue' in byTitle.get('失效日期早于生产日期'), false);
 
+  // 9. 182.5 = 85 + 97.5 proves direct percentage addition is wrong, but not the exact total margin.
   assert.equal(byTitle.get('总毛利率计算方式错误')?.kind, 'logic_error');
   assert.equal('correctedValue' in byTitle.get('总毛利率计算方式错误'), false);
 
+  assert.equal(review.summary.recognitionMode, 'cloud_ocr_deepseek');
+  assert.equal(review.summary.completeReview, true);
+
   for (const issue of review.issues) {
+    if (issue.source !== 'program' || issue.kind !== 'calculation_error') {
+      assert.equal(Object.prototype.hasOwnProperty.call(issue, 'correctedValue'), false, issue.title);
+    }
     if (Object.prototype.hasOwnProperty.call(issue, 'correctedValue')) {
       assert.equal(issue.kind, 'calculation_error');
       assert.equal(issue.source, 'program');

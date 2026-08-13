@@ -39,9 +39,10 @@ test('OCR text is kept only as optional technical detail for report images', () 
   assert.match(js, /file-review-fulltext/);
 });
 
-test('confirmed report review is preserved as diagnosis evidence without turning anomalies into corrections', () => {
-  assert.match(js, /report_issue:/);
-  assert.match(js, /report_review_confirmation:/);
+test('confirmed report review uses the server analysis token instead of browser-forged evidence', () => {
+  assert.match(js, /analysisToken/);
+  assert.doesNotMatch(js, /`report_issue:/);
+  assert.doesNotMatch(js, /`report_review_confirmation:/);
   assert.match(css, /report-issue-card/);
   assert.match(css, /report-review-lead/);
 });

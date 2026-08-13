@@ -11,7 +11,7 @@ export async function crossReviewDiagnosis(primary, { reviewer, shouldReview = d
   if (!primary || !Array.isArray(primary.findings)) throw new TypeError('primary findings are required');
   if (typeof reviewer !== 'function') throw new TypeError('reviewer is required');
 
-  const findings = primary.findings.map((finding) => ({ ...finding }));
+  const findings = primary.findings.map((finding, index) => ({ ...finding, id:`finding_${index + 1}` }));
   const candidates = findings.filter((finding) => !finding.deterministic && shouldReview(finding));
 
   for (const finding of findings) {
@@ -26,14 +26,17 @@ export async function crossReviewDiagnosis(primary, { reviewer, shouldReview = d
 
   const reviewResult = await reviewer({ findings: candidates });
   const reviews = Array.isArray(reviewResult?.reviews) ? reviewResult.reviews : [];
+  const usedReviews = new Set();
 
   for (const finding of findings) {
     if (finding.deterministic || !shouldReview(finding)) continue;
-    const review = reviews.find((item) => item?.title === finding.title);
-    if (!review) {
-      finding.crossModelStatus = 'review_missing';
+    const reviewIndex = reviews.findIndex((item, index) => !usedReviews.has(index) && item?.id === finding.id);
+    const review = reviewIndex >= 0 ? reviews[reviewIndex] : null;
+    if (!review || !['agree', 'disagree'].includes(review.verdict)) {
+      finding.crossModelStatus = 'review_unavailable';
       continue;
     }
+    usedReviews.add(reviewIndex);
 
     finding.review = review;
     if (review.verdict === 'agree') {
