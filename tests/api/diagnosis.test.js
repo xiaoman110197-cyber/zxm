@@ -99,6 +99,25 @@ test('diagnosis emits safe lifecycle events without model content', async () => 
   assert.doesNotMatch(JSON.stringify(events), /秘密|营业额/);
 });
 
+test('diagnosis records the independent review model stage', async () => {
+  const events = [];
+  const res = mockRes();
+  await handleDiagnosisRequest({ method:'POST', body:{ diagnosis:{ id:'review-ops', answers:{}, evidence:[], findings:[], documents:[] } } }, res, {
+    requestId:'req-review-ops', emitOpsEvent:(event) => events.push(event),
+    primaryProvider:{ name:'deepseek', diagnose:async () => ({ mode:'finding', findings:[{
+      id:'finding-1', title:'利润异常', status:'probable', priority:'P1', evidence:['owner_answer:利润下降'],
+      confidence:0.8, impact:'利润承压', action:'核对成本', metric:'毛利率'
+    }] }) },
+    reviewerProvider:{ name:'deepseek', review:async () => ({ reviews:[{
+      id:'finding-1', title:'利润异常', verdict:'agree', reason:'证据一致', missingEvidence:[]
+    }] }) }
+  });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(events.filter(({ event }) => event === 'stage_completed').map(({ stage }) => stage), [
+    'primary-model', 'review-model'
+  ]);
+});
+
 test('diagnosis emits one safe failure event and ignores observability failures', async () => {
   const events = [];
   const req = { method:'POST', body:{ diagnosis:{ id:'ops-failure', answers:{}, evidence:[], findings:[], documents:[] } } };

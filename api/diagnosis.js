@@ -159,7 +159,6 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
       // Observability must never change a business response.
     }
   };
-  emitOps({ event:'request_started' });
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
   const diagnosis = req.body?.diagnosis;
   if (!diagnosis || typeof diagnosis !== 'object' || !diagnosis.id) return jsonError(res, 400, 'diagnosis is required', requestId);
@@ -188,6 +187,7 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
     return jsonError(res, 503, 'Server is missing DEEPSEEK_API_KEY', requestId);
   }
 
+  emitOps({ event:'request_started' });
   try {
     const primaryStartedAt = Date.now();
     const resultRaw = await primaryProvider.diagnose(providerDiagnosis);
@@ -197,10 +197,12 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
     if (result.mode === 'finding') {
       if (reviewerProvider?.review) {
         try {
+          const reviewStartedAt = Date.now();
           result = await crossReviewDiagnosis(result, {
             reviewer:(payload) => reviewerProvider.review(payload),
             shouldReview:() => true
           });
+          emitOps({ event:'stage_completed', stage:'review-model', stageDurationMs:Date.now() - reviewStartedAt });
         } catch (error) {
           logDiagnosisError(`reviewer-provider:${reviewerProvider?.name || 'deepseek'}`, error, requestId, startedAt);
           result = singleModel(result, 'review_unavailable');

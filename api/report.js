@@ -73,7 +73,6 @@ export async function handleReportRequest(req, res, deps = {}) {
       // Observability must never change a business response.
     }
   };
-  emitOps({ event:'request_started' });
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
 
   const file = req.body?.file;
@@ -113,10 +112,11 @@ export async function handleReportRequest(req, res, deps = {}) {
     return jsonError(res, 422, '诊断结果验证失败，请重新生成诊断后再下载', requestId);
   }
 
+  emitOps({ event:'request_started' });
   try {
     const generationStartedAt = Date.now();
     const workbook = XLSX.read(sourceBuffer, { type:'buffer', cellDates:true });
-    if (!workbook.SheetNames?.length) return jsonError(res, 422, '原始 Excel 没有可读取的 Sheet', requestId);
+    if (!workbook.SheetNames?.length) throw new TypeError('workbook has no sheets');
     const audit = normalizeAudit(auditWorkbook(parseWorkbook(sourceBuffer)));
 
     const output = buildReportWorkbook({

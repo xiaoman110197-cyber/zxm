@@ -61,3 +61,23 @@ test('file analysis emits a safe lifecycle without filename or parsed content', 
   assert.equal(events[1].stage, 'parsing');
   assert.doesNotMatch(JSON.stringify(events), /秘密|营业额|\.csv/);
 });
+
+test('image analysis emits each named operations stage once', async () => {
+  const events = [];
+  const res = mockStreamRes();
+  await handleAnalyzeFileRequest({
+    method:'POST', body:{ file:{ name:'screen.png', contentBase64:Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1]).toString('base64') } }
+  }, res, {
+    requestId:'req-image-stages', emitOpsEvent:(event) => events.push(event),
+    parseBusinessDocument:async () => ({ document:{ type:'image', name:'screen.png', text:'', recognitionDeferred:true }, workbook:null }),
+    recognizeReportImage:async () => ({ available:true, provider:'test', model:'test-ocr', text:'营业额 999' }),
+    reportStructurer:async () => ({ facts:[{ key:'revenue', label:'营业额', value:999, unit:'元', evidence:'营业额 999' }] })
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(events.filter(({ event }) => event === 'stage_completed').map(({ stage }) => stage), [
+    'parsing', 'cloud-ocr', 'structuring', 'checking-rules'
+  ]);
+  assert.equal(events.at(0).event, 'request_started');
+  assert.equal(events.at(-1).event, 'request_completed');
+});
