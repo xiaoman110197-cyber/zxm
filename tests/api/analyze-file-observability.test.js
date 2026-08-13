@@ -46,3 +46,18 @@ test('file analysis records safe OCR sub-stage progress with request id for debu
   assert.ok(logs.some((entry) => entry.includes('req-ocr-phase') && entry.includes('progress') && entry.includes('ocr') && entry.includes('recognizing') && entry.includes(58)), JSON.stringify(logs));
   assert.ok(logs.every((entry) => !entry.includes('营业额 88')), JSON.stringify(logs));
 });
+
+test('file analysis emits a safe lifecycle without filename or parsed content', async () => {
+  const events = [];
+  const res = mockStreamRes();
+  await handleAnalyzeFileRequest({
+    method:'POST', body:{ file:{ name:'秘密营业额.csv', contentBase64:Buffer.from('a,b\n1,2').toString('base64') } }
+  }, res, {
+    requestId:'req-file-ops', emitOpsEvent:(event) => events.push(event),
+    parseBusinessDocument:async () => ({ document:{ type:'csv', name:'秘密营业额.csv', text:'营业额 999' }, workbook:null })
+  });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(events.map(({ event }) => event), ['request_started', 'stage_completed', 'request_completed']);
+  assert.equal(events[1].stage, 'parsing');
+  assert.doesNotMatch(JSON.stringify(events), /秘密|营业额|\.csv/);
+});

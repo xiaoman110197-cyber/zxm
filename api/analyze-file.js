@@ -13,6 +13,7 @@ import { buildReportReview } from '../src/report/issues.js';
 import { signTrustToken } from '../src/security/trust-token.js';
 import { sourceDigest } from '../src/security/source-digest.js';
 import { resolveTrustSecret } from '../src/config/runtime.js';
+import { emitOpsEvent as emitRuntimeOpsEvent } from '../src/observability/events.js';
 
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
 const MAX_CONTEXT_ISSUES = 10;
@@ -449,6 +450,14 @@ function safeParseErrorMessage(error) {
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   const requestId = deps.requestId || randomUUID();
   const startedAt = Date.now();
+  const emitOps = (event) => {
+    try {
+      (deps.emitOpsEvent || emitRuntimeOpsEvent)({ route:'analyze-file', requestId, ...event });
+    } catch {
+      // Observability must never change a business response.
+    }
+  };
+  emitOps({ event:'request_started' });
   const logInfo = deps.logInfo || console.info;
   const logError = deps.logError || console.error;
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
@@ -506,7 +515,9 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   try {
     const parser = deps.parseBusinessDocument || parseBusinessDocument;
     const parserDeps = { ...deps, onProgress:observeProgress, deferImageOcr:true };
+    const parsingStartedAt = Date.now();
     const parsed = await parser({ name:file.name, buffer }, parserDeps);
+    emitOps({ event:'stage_completed', stage:'parsing', stageDurationMs:Date.now() - parsingStartedAt });
     let reportData = null;
     if (parsed.document?.type === 'image') {
       reportData = await analyzeImageReport({ file, buffer, parsed, extension, deps, observeProgress });
@@ -517,6 +528,7 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
     const payload = buildPayload(effectiveParsed, requestId, reportData, deps, digest);
 
     logInfo('[analyze-file]', requestId, 'complete', Date.now() - startedAt);
+    emitOps({ event:'request_completed', durationMs:Date.now() - startedAt });
     if (streamMode) {
       observeProgress({ phase:'complete', percent:100, message:'分析完成' });
       writeSse(res, 'result', payload);
@@ -527,6 +539,7 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   } catch (error) {
     const clientMessage = safeParseErrorMessage(error);
     logError('[analyze-file]', requestId, 'failed', Date.now() - startedAt, error?.code || error?.name || 'Error');
+    emitOps({ event:'request_failed', level:'error', durationMs:Date.now() - startedAt, failureCode:'DOCUMENT_PARSE_ERROR' });
     if (streamMode) {
       writeSse(res, 'error', { error:clientMessage, requestId });
       res.end();
