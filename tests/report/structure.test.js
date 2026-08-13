@@ -161,3 +161,13 @@ test('extracts independently checkable facts from DeepSeek OCR HTML tables when 
     ]
   );
 });
+
+test('uses deterministic HTML table facts when the AI structurer request fails', async () => {
+  const text = '<table><tr><td>区域</td><td>营业额（万元）</td><td>营业成本（万元）</td><td>毛利（万元）</td><td>毛利率</td></tr><tr><td>华南</td><td>280</td><td>190</td><td>120</td><td>42.9%</td></tr></table>';
+  const provider = { async structureReport() { throw new Error('upstream unavailable'); } };
+
+  const result = await structureReportText({ text, source:'qianfan_ocr' }, { provider });
+
+  assert.equal(result.facts.length, 4);
+  assert.deepEqual(inspectReportFacts(result.facts).map((issue) => issue.title), ['毛利计算错误','毛利率计算错误']);
+});

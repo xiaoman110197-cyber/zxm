@@ -240,7 +240,14 @@ export async function structureReportText({ text, source = 'qianfan_ocr', degrad
   if (typeof text !== 'string' || !text.trim()) throw new TypeError('OCR text is required');
   if (!provider?.structureReport) throw new TypeError('report structure provider is required');
 
-  const raw = await provider.structureReport({ text, source, degraded });
+  let raw;
+  try {
+    raw = await provider.structureReport({ text, source, degraded });
+  } catch (error) {
+    const fallbackFacts = degraded ? [] : extractHtmlTableFacts(text, source);
+    if (!fallbackFacts.length) throw error;
+    return { facts:fallbackFacts, candidates:[], confirmations:[] };
+  }
   const facts = [];
   const factIdMap = new Map();
   for (const item of Array.isArray(raw?.facts) ? raw.facts.slice(0, 160) : []) {
