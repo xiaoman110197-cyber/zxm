@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow">
+  <title>运行状态｜老板经营问诊器</title>
+  <link rel="stylesheet" href="/admin/ops.css">
+</head>
+<body>
+  <main class="ops-shell">
+    <header class="ops-header">
+      <div><span class="eyebrow">管理员工具</span><h1>运行状态</h1><p>只展示请求结果、耗时和安全错误码，不展示经营内容。</p></div>
+      <button id="logout" type="button" hidden>退出</button>
+    </header>
+
+    <section id="admin-login" class="panel login-panel">
+      <h2>管理员登录</h2>
+      <form id="login-form">
+        <label for="admin-password">管理员密码</label>
+        <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit" class="primary">登录</button>
+      </form>
+      <p id="login-status" class="status" aria-live="polite"></p>
+    </section>
+
+    <div id="dashboard" hidden>
+      <section class="toolbar panel">
+        <label for="range">查询范围</label>
+        <select id="range"><option value="24h">最近 24 小时</option><option value="7d">最多 7 天</option></select>
+        <label for="request-filter">请求 ID</label>
+        <input id="request-filter" maxlength="128" placeholder="可选：精确查询">
+        <button id="refresh" type="button">刷新</button>
+      </section>
+
+      <p id="coverage-status" class="coverage panel" aria-live="polite"></p>
+      <section id="summary-cards" class="summary-grid" aria-label="状态摘要"></section>
+
+      <section class="panel"><h2>错误分布</h2><div class="table-scroll"><table id="error-table"><thead><tr><th>错误码</th><th>次数</th><th>占比</th></tr></thead><tbody></tbody></table></div></section>
+      <section class="panel"><h2>阶段耗时</h2><div class="table-scroll"><table id="stage-table"><thead><tr><th>阶段</th><th>样本</th><th>平均</th><th>P95</th></tr></thead><tbody></tbody></table></div></section>
+      <section class="panel"><h2>最近请求</h2><div class="table-scroll"><table id="request-table"><thead><tr><th>时间</th><th>路由</th><th>请求 ID</th><th>结果</th><th>耗时</th><th>阶段</th><th>错误码</th><th>版本</th></tr></thead><tbody></tbody></table></div></section>
+    </div>
+  </main>
+  <script type="module" src="/admin/ops.js"></script>
+</body>
+</html>
