@@ -27,8 +27,8 @@ test('admin layout contains a narrow-screen table overflow boundary', async () =
   assert.match(css, /max-width:\s*100%/);
 });
 
-test('production build copies administrator assets into dist', async () => {
+test('administrator assets are present in the public production source', async () => {
   for (const name of ['ops.html', 'ops.js', 'ops.css']) {
-    await access(new URL(`../../dist/admin/${name}`, import.meta.url));
+    await access(new URL(`../../public/admin/${name}`, import.meta.url));
   }
 });
