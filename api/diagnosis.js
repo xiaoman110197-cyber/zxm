@@ -6,6 +6,7 @@ import { checkBurstLimit } from '../src/http/guard.js';
 import { assembleTrustedDiagnosis } from '../src/ai/trusted-context.js';
 import { signTrustToken } from '../src/security/trust-token.js';
 import { resolveTrustSecret } from '../src/config/runtime.js';
+import { emitOpsEvent as emitRuntimeOpsEvent } from '../src/observability/events.js';
 
 const FINDING_STATUSES = new Set(['confirmed', 'probable', 'hypothesis']);
 const PRIORITIES = new Set(['P0', 'P1', 'P2']);
@@ -151,6 +152,13 @@ function buildRuntimeProviders() {
 export async function handleDiagnosisRequest(req, res, deps = {}) {
   const requestId = deps.requestId || randomUUID();
   const startedAt = Date.now();
+  const emitOps = (event) => {
+    try {
+      (deps.emitOpsEvent || emitRuntimeOpsEvent)({ route:'diagnosis', requestId, ...event });
+    } catch {
+      // Observability must never change a business response.
+    }
+  };
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
   const diagnosis = req.body?.diagnosis;
   if (!diagnosis || typeof diagnosis !== 'object' || !diagnosis.id) return jsonError(res, 400, 'diagnosis is required', requestId);
@@ -179,17 +187,22 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
     return jsonError(res, 503, 'Server is missing DEEPSEEK_API_KEY', requestId);
   }
 
+  emitOps({ event:'request_started' });
   try {
+    const primaryStartedAt = Date.now();
     const resultRaw = await primaryProvider.diagnose(providerDiagnosis);
+    emitOps({ event:'stage_completed', stage:'primary-model', stageDurationMs:Date.now() - primaryStartedAt });
     let result = validateAiResult(normalizeAiResult(resultRaw));
 
     if (result.mode === 'finding') {
       if (reviewerProvider?.review) {
         try {
+          const reviewStartedAt = Date.now();
           result = await crossReviewDiagnosis(result, {
             reviewer:(payload) => reviewerProvider.review(payload),
             shouldReview:() => true
           });
+          emitOps({ event:'stage_completed', stage:'review-model', stageDurationMs:Date.now() - reviewStartedAt });
         } catch (error) {
           logDiagnosisError(`reviewer-provider:${reviewerProvider?.name || 'deepseek'}`, error, requestId, startedAt);
           result = singleModel(result, 'review_unavailable');
@@ -221,9 +234,11 @@ export async function handleDiagnosisRequest(req, res, deps = {}) {
         if (production) throw error;
       }
     }
+    emitOps({ event:'request_completed', durationMs:Date.now() - startedAt });
     return res.status(200).json({ ...result, diagnosisToken, requestId });
   } catch (error) {
     logDiagnosisError(`primary-provider:${primaryProvider?.name || 'deepseek'}`, error, requestId, startedAt);
+    emitOps({ event:'request_failed', level:'error', durationMs:Date.now() - startedAt, failureCode:'PRIMARY_PROVIDER_ERROR' });
     return jsonError(res, 502, 'AI diagnosis failed', requestId);
   }
 }

@@ -8,6 +8,7 @@ import { checkBurstLimit, requestClientKey } from '../src/http/guard.js';
 import { verifyTrustToken } from '../src/security/trust-token.js';
 import { sourceDigest } from '../src/security/source-digest.js';
 import { resolveTrustSecret } from '../src/config/runtime.js';
+import { emitOpsEvent as emitRuntimeOpsEvent } from '../src/observability/events.js';
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
@@ -64,6 +65,14 @@ function applyBurstGuard(req, res, requestId, deps) {
 
 export async function handleReportRequest(req, res, deps = {}) {
   const requestId = deps.requestId || randomUUID();
+  const startedAt = Date.now();
+  const emitOps = (event) => {
+    try {
+      (deps.emitOpsEvent || emitRuntimeOpsEvent)({ route:'report', requestId, ...event });
+    } catch {
+      // Observability must never change a business response.
+    }
+  };
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
 
   const file = req.body?.file;
@@ -103,9 +112,11 @@ export async function handleReportRequest(req, res, deps = {}) {
     return jsonError(res, 422, '诊断结果验证失败，请重新生成诊断后再下载', requestId);
   }
 
+  emitOps({ event:'request_started' });
   try {
+    const generationStartedAt = Date.now();
     const workbook = XLSX.read(sourceBuffer, { type:'buffer', cellDates:true });
-    if (!workbook.SheetNames?.length) return jsonError(res, 422, '原始 Excel 没有可读取的 Sheet', requestId);
+    if (!workbook.SheetNames?.length) throw new TypeError('workbook has no sheets');
     const audit = normalizeAudit(auditWorkbook(parseWorkbook(sourceBuffer)));
 
     const output = buildReportWorkbook({
@@ -113,6 +124,9 @@ export async function handleReportRequest(req, res, deps = {}) {
       audit,
       findings
     });
+
+    emitOps({ event:'stage_completed', stage:'report-generation', stageDurationMs:Date.now() - generationStartedAt });
+    emitOps({ event:'request_completed', durationMs:Date.now() - startedAt });
 
     return res.status(200).json({
       requestId,
@@ -122,6 +136,7 @@ export async function handleReportRequest(req, res, deps = {}) {
     });
   } catch (error) {
     console.error('[report]', requestId, 'failed', error?.name || 'Error');
+    emitOps({ event:'request_failed', level:'error', durationMs:Date.now() - startedAt, failureCode:'REPORT_GENERATION_ERROR' });
     return jsonError(res, 422, 'Excel 报告生成失败', requestId);
   }
 }

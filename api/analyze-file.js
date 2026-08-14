@@ -13,6 +13,7 @@ import { buildReportReview } from '../src/report/issues.js';
 import { signTrustToken } from '../src/security/trust-token.js';
 import { sourceDigest } from '../src/security/source-digest.js';
 import { resolveTrustSecret } from '../src/config/runtime.js';
+import { emitOpsEvent as emitRuntimeOpsEvent } from '../src/observability/events.js';
 
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
 const MAX_CONTEXT_ISSUES = 10;
@@ -269,10 +270,11 @@ function runtimeReportStructureProvider(deps) {
   return createDeepSeekProvider({ apiKey, timeoutMs:12000 });
 }
 
-async function analyzeImageReport({ file, buffer, parsed, extension, deps, observeProgress }) {
+async function analyzeImageReport({ file, buffer, parsed, extension, deps, observeProgress, completeOpsStage }) {
   const recognizer = deps.recognizeReportImage || recognizeReportImage;
   observeProgress({ phase:'cloud-ocr', percent:88, message:'正在读取报表原图和表格结构', stage:'cloud-ocr' });
 
+  const cloudStartedAt = Date.now();
   let cloud;
   try {
     cloud = await recognizer({
@@ -290,6 +292,7 @@ async function analyzeImageReport({ file, buffer, parsed, extension, deps, obser
       warning:'云端报表识别暂时失败'
     };
   }
+  completeOpsStage('cloud-ocr', cloudStartedAt);
 
   let recognition;
   let text;
@@ -358,6 +361,7 @@ async function analyzeImageReport({ file, buffer, parsed, extension, deps, obser
     : { ...parsed.document, recognitionDeferred:false };
 
   observeProgress({ phase:'structuring', percent:93, message:'正在整理经营字段和行列关系', stage:'structuring' });
+  const structuringStartedAt = Date.now();
   let structured;
   try {
     if (typeof deps.reportStructurer === 'function') {
@@ -367,6 +371,7 @@ async function analyzeImageReport({ file, buffer, parsed, extension, deps, obser
       structured = await structureReportText({ text, source, degraded }, { provider });
     }
   } catch {
+    completeOpsStage('structuring', structuringStartedAt);
     recognition = {
       ...recognition,
       completeReview:false,
@@ -375,13 +380,16 @@ async function analyzeImageReport({ file, buffer, parsed, extension, deps, obser
     };
     return { reportReview:buildReportReview({ recognition }), reportFacts:[], document:selectedDocument };
   }
+  completeOpsStage('structuring', structuringStartedAt);
 
   observeProgress({ phase:'report-check', percent:96, message:'正在复算公式并检查数据逻辑', stage:'checking-rules' });
+  const checkingStartedAt = Date.now();
   const reconciled = buildReportFacts({
     structuredFacts:structured?.facts || [],
     corroborationText:text,
     degraded
   });
+  completeOpsStage('checking-rules', checkingStartedAt);
   if (!degraded && reconciled.facts.length === 0) {
     recognition = {
       ...recognition,
@@ -449,6 +457,13 @@ function safeParseErrorMessage(error) {
 export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   const requestId = deps.requestId || randomUUID();
   const startedAt = Date.now();
+  const emitOps = (event) => {
+    try {
+      (deps.emitOpsEvent || emitRuntimeOpsEvent)({ route:'analyze-file', requestId, ...event });
+    } catch {
+      // Observability must never change a business response.
+    }
+  };
   const logInfo = deps.logInfo || console.info;
   const logError = deps.logError || console.error;
   if (req.method && req.method !== 'POST') return jsonError(res, 405, 'Method not allowed', requestId);
@@ -478,6 +493,7 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
     return jsonError(res, 413, '文件过大：当前版本单个文件最大支持 3 MB', requestId);
   }
   const digest = sourceDigest(buffer);
+  emitOps({ event:'request_started' });
 
   const streamMode = isStreamRequest(req);
   const emitProgress = (event) => writeSse(res, 'progress', { requestId, ...event });
@@ -506,10 +522,15 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   try {
     const parser = deps.parseBusinessDocument || parseBusinessDocument;
     const parserDeps = { ...deps, onProgress:observeProgress, deferImageOcr:true };
+    const parsingStartedAt = Date.now();
     const parsed = await parser({ name:file.name, buffer }, parserDeps);
+    emitOps({ event:'stage_completed', stage:'parsing', stageDurationMs:Date.now() - parsingStartedAt });
     let reportData = null;
     if (parsed.document?.type === 'image') {
-      reportData = await analyzeImageReport({ file, buffer, parsed, extension, deps, observeProgress });
+      reportData = await analyzeImageReport({
+        file, buffer, parsed, extension, deps, observeProgress,
+        completeOpsStage:(stage, stageStartedAt) => emitOps({ event:'stage_completed', stage, stageDurationMs:Date.now() - stageStartedAt })
+      });
     } else if (streamMode) {
       observeProgress({ phase:'audit', percent:90, message:'正在检查数据质量并整理结果' });
     }
@@ -517,6 +538,7 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
     const payload = buildPayload(effectiveParsed, requestId, reportData, deps, digest);
 
     logInfo('[analyze-file]', requestId, 'complete', Date.now() - startedAt);
+    emitOps({ event:'request_completed', durationMs:Date.now() - startedAt });
     if (streamMode) {
       observeProgress({ phase:'complete', percent:100, message:'分析完成' });
       writeSse(res, 'result', payload);
@@ -527,6 +549,7 @@ export async function handleAnalyzeFileRequest(req, res, deps = {}) {
   } catch (error) {
     const clientMessage = safeParseErrorMessage(error);
     logError('[analyze-file]', requestId, 'failed', Date.now() - startedAt, error?.code || error?.name || 'Error');
+    emitOps({ event:'request_failed', level:'error', durationMs:Date.now() - startedAt, failureCode:'DOCUMENT_PARSE_ERROR' });
     if (streamMode) {
       writeSse(res, 'error', { error:clientMessage, requestId });
       res.end();

@@ -63,3 +63,31 @@ Vercel 的 Preview 与 Production 环境变量相互独立。修改环境变量�
 - 经营诊断结果的证据约束与第二次复核
 
 > 原则：无法直接获得的数据不伪装成实时能力；证据不足时追问或标记待确认，而不是猜测。
+
+## 管理员运行状态面板
+
+部署后访问 `/admin/ops`，可查看文件分析、经营诊断和报告生成请求的成功/失败、总耗时、阶段耗时、安全错误码及请求 ID。面板不会显示或保存文件名、文件内容、OCR 原文、经营数据、模型原始响应或用户身份信息。
+
+服务端环境变量：
+
+```text
+ADMIN_PASSWORD       必填：独立、高强度管理员密码
+ADMIN_SESSION_SECRET 必填：至少 32 字节的随机会话签名密钥
+VERCEL_TOKEN         必填：可读取当前项目部署与 Runtime Logs 的短期、最小权限 Token
+VERCEL_PROJECT_ID    必填：当前 Vercel 项目 ID（prj_...）
+VERCEL_TEAM_ID       可选：项目属于 Team 时填写 team_...
+```
+
+可以在本机生成会话密钥：
+
+```bash
+openssl rand -base64 48
+```
+
+这些变量只配置在 Vercel 服务端，不能写入前端、仓库、日志或截图。Preview 与 Production 的环境变量相互独立；配置或修改后必须重新部署对应环境。Vercel Token 应设置过期时间，并只授予读取目标项目部署和日志所需的权限。
+
+查询范围可选择最近 24 小时或最多 7 天，但 Vercel 当前普通 Runtime Logs 文档说明保留约 3 天。页面会显示实际最早/最晚日志时间；出现“数据可能不完整”或“没有可用日志”时，不能把它解释成系统健康。需要更长历史时，再评估 Vercel Log Drains 和独立日志存储。
+
+面板不可用不会影响主业务。如果需要紧急关闭面板，可从目标环境移除 `ADMIN_PASSWORD`、`ADMIN_SESSION_SECRET`、`VERCEL_TOKEN` 和 `VERCEL_PROJECT_ID` 后重新部署；也可以回滚该功能分支。关闭面板不会删除或修改经营数据。
+
+本功能验收不需要调用千帆 OCR。优先使用已有 Runtime Logs 和自动化测试，避免产生无关模型费用。

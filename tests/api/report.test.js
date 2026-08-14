@@ -130,6 +130,21 @@ test('report api returns a real xlsx preserving original sheets and adding analy
   assert.doesNotMatch(JSON.stringify(errors), /forged_client_error|客户端伪造错误/);
 });
 
+test('report emits safe lifecycle events without the source filename', async () => {
+  const handleReportRequest = await loadHandler();
+  const events = [];
+  const res = mockRes();
+  await handleReportRequest({ method:'POST', body:{
+    file:{ name:'秘密经营数据.xlsx', contentBase64:sourceBase64() }, diagnosisToken:diagnosisToken([])
+  } }, res, {
+    trustSecret, disableBurstGuard:true, requestId:'req-report-ops', emitOpsEvent:(event) => events.push(event)
+  });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(events.map(({ event }) => event), ['request_started', 'stage_completed', 'request_completed']);
+  assert.equal(events[1].stage, 'report-generation');
+  assert.doesNotMatch(JSON.stringify(events), /秘密|经营数据|\.xlsx/);
+});
+
 test('uncertain corrections stay marked 待确认 in downloadable report', async () => {
   const handleReportRequest = await loadHandler();
   const res = mockRes();
