@@ -9,7 +9,7 @@ function reply(res, status, body) {
 }
 
 function cookie(value, maxAge = SESSION_TTL_SECONDS) {
-  return `${ADMIN_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/admin; Max-Age=${maxAge}`;
+  return `${ADMIN_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
 }
 
 export async function handleAdminLoginRequest(req, res, deps = {}) {

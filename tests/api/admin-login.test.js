@@ -32,7 +32,7 @@ test('successful login sets a short secure server-only cookie and reflects no se
   assert.match(res.headers['set-cookie'], /HttpOnly/);
   assert.match(res.headers['set-cookie'], /Secure/);
   assert.match(res.headers['set-cookie'], /SameSite=Strict/);
-  assert.match(res.headers['set-cookie'], /Path=\/admin/);
+  assert.match(res.headers['set-cookie'], /Path=\/;/);
   assert.match(res.headers['set-cookie'], /Max-Age=1800/);
   assert.doesNotMatch(JSON.stringify(res), /correct horse|ssssssss/);
 });

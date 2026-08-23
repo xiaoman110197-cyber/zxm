@@ -37,3 +37,9 @@ test('administrator API functions have bounded durations', () => {
   assert.equal(vercel.functions?.['api/admin-login.js']?.maxDuration, 10);
   assert.equal(vercel.functions?.['api/admin-ops.js']?.maxDuration, 10);
 });
+
+test('clean administrator URL serves the production dashboard asset', () => {
+  assert.ok(vercel.rewrites?.some(({ source, destination }) => (
+    source === '/admin/ops' && destination === '/admin/ops.html'
+  )));
+});
