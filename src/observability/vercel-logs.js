@@ -3,6 +3,7 @@ const MAX_RANGE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_DEPLOYMENTS = 5;
 const MAX_RECORDS = 1000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const STREAM_READ_MS = 750;
 
 function safeError(code) {
   const error = new Error(code);
@@ -37,12 +38,68 @@ async function checkedFetch(url, options, fetchImpl) {
   }
 }
 
-async function boundedText(response) {
-  const text = await response.text();
-  if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) {
-    return { text:text.slice(0, MAX_RESPONSE_BYTES), truncated:true };
+async function boundedText(response, maxWaitMs = STREAM_READ_MS, maxBytes = MAX_RESPONSE_BYTES) {
+  const byteLimit = Math.max(0, Math.min(MAX_RESPONSE_BYTES, Number(maxBytes) || 0));
+  if (byteLimit === 0) return { text:'', truncated:true, bytesRead:0 };
+
+  if (!response.body?.getReader) {
+    const text = await response.text();
+    const bytes = Buffer.from(text, 'utf8');
+    const truncated = bytes.byteLength > byteLimit;
+    return {
+      text:new TextDecoder().decode(bytes.subarray(0, byteLimit)),
+      truncated,
+      bytesRead:Math.min(bytes.byteLength, byteLimit)
+    };
   }
-  return { text, truncated:false };
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const deadline = Date.now() + Math.max(1, Number(maxWaitMs) || STREAM_READ_MS);
+  let text = '';
+  let done = false;
+  let truncated = false;
+  let bytesRead = 0;
+
+  try {
+    while (!done) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      let timer;
+      let outcome;
+      try {
+        outcome = await Promise.race([
+          reader.read().then((value) => ({ type:'read', value })),
+          new Promise((resolve) => { timer = setTimeout(() => resolve({ type:'timeout' }), remainingMs); })
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      if (outcome.type === 'timeout') break;
+      ({ done } = outcome.value);
+      if (outcome.value.value) {
+        const chunk = outcome.value.value;
+        const remainingBytes = byteLimit - bytesRead;
+        const accepted = chunk.subarray(0, remainingBytes);
+        bytesRead += accepted.byteLength;
+        text += decoder.decode(accepted, { stream:true });
+        if (accepted.byteLength < chunk.byteLength || bytesRead >= byteLimit) {
+          truncated = true;
+          break;
+        }
+      }
+    }
+    text += decoder.decode();
+  } finally {
+    if (!done) {
+      truncated = true;
+      try {
+        Promise.resolve(reader.cancel()).catch(() => {});
+      } catch {}
+    }
+  }
+
+  return { text, truncated, bytesRead };
 }
 
 function recordsFromText(text) {
@@ -68,7 +125,8 @@ export async function fetchRuntimeLogs({
   until = new Date(),
   limit = MAX_RECORDS,
   fetchImpl = fetch,
-  signal
+  signal,
+  streamReadMs = STREAM_READ_MS
 } = {}) {
   if (!String(token || '').trim() || !String(projectId || '').trim()) {
     throw new TypeError('Vercel log configuration is required');
@@ -100,6 +158,8 @@ export async function fetchRuntimeLogs({
   let usedBytes = 0;
 
   for (const deployment of deployments) {
+    const remainingBytes = MAX_RESPONSE_BYTES - usedBytes;
+    if (remainingBytes <= 0) { truncated = true; break; }
     const deploymentId = String(deployment?.uid || deployment?.id || '');
     if (!deploymentId) continue;
     const logsUrl = new URL(`/v1/projects/${encodeURIComponent(projectId)}/deployments/${encodeURIComponent(deploymentId)}/runtime-logs`, API_ORIGIN);
@@ -108,8 +168,8 @@ export async function fetchRuntimeLogs({
     logsUrl.searchParams.set('limit', String(recordLimit - records.length));
     if (teamId) logsUrl.searchParams.set('teamId', teamId);
     const logsResponse = await checkedFetch(logsUrl, { headers, signal:requestSignal }, fetchImpl);
-    const bounded = await boundedText(logsResponse);
-    usedBytes += Buffer.byteLength(bounded.text, 'utf8');
+    const bounded = await boundedText(logsResponse, streamReadMs, remainingBytes);
+    usedBytes += bounded.bytesRead;
     if (bounded.truncated || usedBytes >= MAX_RESPONSE_BYTES) truncated = true;
     for (const record of recordsFromText(bounded.text)) {
       if (records.length >= recordLimit) { truncated = true; break; }
