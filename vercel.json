@@ -2,6 +2,9 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/admin/ops", "destination": "/admin/ops.html" }
+  ],
   "functions": {
     "api/analyze-file.js": {
       "maxDuration": 180,
