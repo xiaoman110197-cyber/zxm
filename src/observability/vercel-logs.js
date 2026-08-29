@@ -117,6 +117,10 @@ function recordsFromText(text) {
   }
 }
 
+function recordTimestampMs(record) {
+  return Number.isFinite(record?.timestampInMs) ? record.timestampInMs : null;
+}
+
 export async function fetchRuntimeLogs({
   token,
   projectId,
@@ -163,9 +167,6 @@ export async function fetchRuntimeLogs({
     const deploymentId = String(deployment?.uid || deployment?.id || '');
     if (!deploymentId) continue;
     const logsUrl = new URL(`/v1/projects/${encodeURIComponent(projectId)}/deployments/${encodeURIComponent(deploymentId)}/runtime-logs`, API_ORIGIN);
-    logsUrl.searchParams.set('since', String(sinceMs));
-    logsUrl.searchParams.set('until', String(untilMs));
-    logsUrl.searchParams.set('limit', String(recordLimit - records.length));
     if (teamId) logsUrl.searchParams.set('teamId', teamId);
     const logsResponse = await checkedFetch(logsUrl, { headers, signal:requestSignal }, fetchImpl);
     const bounded = await boundedText(logsResponse, streamReadMs, remainingBytes);
@@ -173,6 +174,8 @@ export async function fetchRuntimeLogs({
     if (bounded.truncated || usedBytes >= MAX_RESPONSE_BYTES) truncated = true;
     for (const record of recordsFromText(bounded.text)) {
       if (records.length >= recordLimit) { truncated = true; break; }
+      const timestampMs = recordTimestampMs(record);
+      if (timestampMs === null || timestampMs < sinceMs || timestampMs > untilMs) continue;
       if (record && typeof record.message === 'string') {
         records.push({
           message:record.message,

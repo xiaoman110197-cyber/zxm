@@ -6,6 +6,8 @@ function response(body, { status = 200, contentType = 'application/json' } = {})
   return new Response(body, { status, headers:{ 'content-type':contentType } });
 }
 
+const CURRENT_TIMESTAMP_MS = Date.now();
+
 test('queries bounded production deployments and parses runtime NDJSON', async () => {
   const calls = [];
   const fetchImpl = async (url, init) => {
@@ -13,7 +15,7 @@ test('queries bounded production deployments and parses runtime NDJSON', async (
     if (String(url).includes('/v6/deployments')) {
       return response(JSON.stringify({ deployments:Array.from({ length:7 }, (_, index) => ({ uid:`dpl_${index}` })) }));
     }
-    return response(`${JSON.stringify({ message:'OPS_EVENT safe', timestampInMs:1 })}\n`, { contentType:'application/x-ndjson' });
+    return response(`${JSON.stringify({ message:'OPS_EVENT safe', timestampInMs:Date.parse('2026-08-13T12:00:00Z') })}\n`, { contentType:'application/x-ndjson' });
   };
   const result = await fetchRuntimeLogs({
     token:'vercel-secret', projectId:'prj_1', teamId:'team_1', since:'30d',
@@ -28,10 +30,34 @@ test('queries bounded production deployments and parses runtime NDJSON', async (
   assert.equal(deploymentUrl.searchParams.get('teamId'), 'team_1');
   assert.equal(deploymentUrl.searchParams.get('target'), 'production');
   assert.equal(Number(deploymentUrl.searchParams.get('since')), Date.parse('2026-08-07T00:00:00Z'));
+  const runtimeUrl = new URL(calls[1].url);
+  assert.equal(runtimeUrl.searchParams.get('teamId'), 'team_1');
+  assert.deepEqual([...runtimeUrl.searchParams.keys()], ['teamId']);
+});
+
+test('filters returned runtime logs locally to the requested window', async () => {
+  const before = JSON.stringify({ message:'OPS_EVENT before', timestampInMs:Date.parse('2026-08-12T23:59:59Z') });
+  const atStart = JSON.stringify({ message:'OPS_EVENT at-start', timestampInMs:Date.parse('2026-08-13T00:00:00Z') });
+  const inside = JSON.stringify({ message:'OPS_EVENT inside', timestampInMs:Date.parse('2026-08-13T12:00:00Z') });
+  const atEnd = JSON.stringify({ message:'OPS_EVENT at-end', timestampInMs:Date.parse('2026-08-14T00:00:00Z') });
+  const after = JSON.stringify({ message:'OPS_EVENT after', timestampInMs:Date.parse('2026-08-14T00:00:01Z') });
+  const missingTimestamp = JSON.stringify({ message:'OPS_EVENT missing-timestamp' });
+  const fetchImpl = async (url) => String(url).includes('/v6/deployments')
+    ? response(JSON.stringify({ deployments:[{ uid:'dpl_range' }] }))
+    : response(`${before}\n${atStart}\n${inside}\n${atEnd}\n${after}\n${missingTimestamp}\n`, { contentType:'application/x-ndjson' });
+
+  const result = await fetchRuntimeLogs({
+    token:'token', projectId:'prj', teamId:'team', since:'24h',
+    until:new Date('2026-08-14T00:00:00Z'), fetchImpl
+  });
+
+  assert.deepEqual(result.records.map(({ message }) => message), [
+    'OPS_EVENT at-start', 'OPS_EVENT inside', 'OPS_EVENT at-end'
+  ]);
 });
 
 test('caps total runtime records at one thousand', async () => {
-  const line = `${JSON.stringify({ message:'OPS_EVENT safe', timestampInMs:1 })}\n`;
+  const line = `${JSON.stringify({ message:'OPS_EVENT safe', timestampInMs:Date.parse('2026-08-13T12:00:00Z') })}\n`;
   const fetchImpl = async (url) => String(url).includes('/v6/deployments')
     ? response(JSON.stringify({ deployments:[{ uid:'dpl_one' }] }))
     : response(line.repeat(1200), { contentType:'application/x-ndjson' });
@@ -81,7 +107,7 @@ test('does not wait for a streaming reader cancellation promise to settle', asyn
     }
     const body = new ReadableStream({
       start(controller) {
-        controller.enqueue(encoder.encode(`${JSON.stringify({ message, timestampInMs:1 })}\n`));
+        controller.enqueue(encoder.encode(`${JSON.stringify({ message, timestampInMs:CURRENT_TIMESTAMP_MS })}\n`));
       },
       cancel() {
         return new Promise(() => {});
@@ -101,7 +127,7 @@ test('does not wait for a streaming reader cancellation promise to settle', asyn
 
 test('caps a multibyte streaming response by UTF-8 bytes', async () => {
   const oversizedMessage = `OPS_EVENT ${'测'.repeat(400000)}`;
-  const line = `${JSON.stringify({ message:oversizedMessage, timestampInMs:1 })}\n`;
+  const line = `${JSON.stringify({ message:oversizedMessage, timestampInMs:CURRENT_TIMESTAMP_MS })}\n`;
   const fetchImpl = async (url) => String(url).includes('/v6/deployments')
     ? response(JSON.stringify({ deployments:[{ uid:'dpl_multibyte' }] }))
     : response(line, { contentType:'application/x-ndjson' });
@@ -113,7 +139,7 @@ test('caps a multibyte streaming response by UTF-8 bytes', async () => {
 });
 
 test('caps runtime response bytes cumulatively across deployments', async () => {
-  const line = `${JSON.stringify({ message:`OPS_EVENT ${'x'.repeat(600 * 1024)}`, timestampInMs:1 })}\n`;
+  const line = `${JSON.stringify({ message:`OPS_EVENT ${'x'.repeat(600 * 1024)}`, timestampInMs:CURRENT_TIMESTAMP_MS })}\n`;
   const fetchImpl = async (url) => String(url).includes('/v6/deployments')
     ? response(JSON.stringify({ deployments:[{ uid:'dpl_one' }, { uid:'dpl_two' }] }))
     : response(line, { contentType:'application/x-ndjson' });
