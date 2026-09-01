@@ -6,6 +6,10 @@ const html = await readFile(new URL('../../public/experience/index.html', import
 const js = await readFile(new URL('../../public/experience/app.js', import.meta.url), 'utf8');
 const css = await readFile(new URL('../../public/experience/styles.css', import.meta.url), 'utf8');
 
+test('experience browser bundle parses as JavaScript', () => {
+  assert.doesNotThrow(() => new Function(js));
+});
+
 test('experience is a separate page and keeps the existing homepage untouched', () => {
   assert.match(html, /降本.*增效.*增利/);
   assert.match(html, /id="roiForm"/);
