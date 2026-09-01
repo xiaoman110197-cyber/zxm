@@ -10,20 +10,35 @@ const FIELD_ALIASES = {
   taskStatus:['任务状态','跟进状态','待办状态','task_status']
 };
 
-const LABELS = {
+export const EXPERIENCE_FIELD_LABELS = Object.freeze({
   date:'日期', customer:'客户', valid:'有效咨询', status:'业务/预约状态', amount:'金额/营业额', channel:'渠道', owner:'负责人', due:'跟进截止时间', taskStatus:'任务状态'
-};
+});
 
 function normalize(value){ return String(value ?? '').trim().toLowerCase().replace(/[\s_\-—/\\（）()【】\[\]:：.]/g, ''); }
 const NORMALIZED_ALIASES = Object.fromEntries(Object.entries(FIELD_ALIASES).map(([key, values]) => [key, new Set(values.map(normalize))]));
+const CANONICAL_FIELDS = new Set(Object.keys(EXPERIENCE_FIELD_LABELS));
 
-function mapHeaders(headers = []){
+function confirmedMapForSheet(headers, sheetName, confirmedMappings){
+  const headerSet = new Set(headers);
+  const result = {};
+  for (const item of Array.isArray(confirmedMappings) ? confirmedMappings : []) {
+    if (!item || item.sheet !== sheetName || !CANONICAL_FIELDS.has(item.field) || !headerSet.has(item.header)) continue;
+    if (result[item.field] === undefined) result[item.field] = item.header;
+  }
+  return result;
+}
+
+function mapHeaders(headers = [], confirmedMappings = [], sheetName = ''){
   const map = {};
   for (const header of headers) {
     const normalized = normalize(header);
     for (const [key, aliases] of Object.entries(NORMALIZED_ALIASES)) {
       if (map[key] === undefined && aliases.has(normalized)) map[key] = header;
     }
+  }
+  const confirmed = confirmedMapForSheet(headers, sheetName, confirmedMappings);
+  for (const [key, header] of Object.entries(confirmed)) {
+    if (map[key] === undefined) map[key] = header;
   }
   return map;
 }
@@ -83,9 +98,9 @@ function statusCounts(rows, map){
   return { appointments, arrivals, completed, noShows, cancelled };
 }
 
-function pickSheet(workbook){
+function pickSheet(workbook, confirmedMappings){
   const candidates = (workbook?.sheets || []).map((sheet) => {
-    const map = mapHeaders(sheet.headers || []);
+    const map = mapHeaders(sheet.headers || [], confirmedMappings, sheet.name);
     const matched = Object.keys(map).length;
     const businessMatched = ['date','customer','status','amount','channel','owner','due','taskStatus'].filter((key) => map[key]).length;
     return { sheet, map, matched, businessMatched, score:businessMatched*1000 + matched*100 + (sheet.rows?.length || 0) };
@@ -120,10 +135,10 @@ function overdueOwners(rows, map, cutoff){
   return [...groups.entries()].map(([owner, overdue]) => ({ owner, overdue })).sort((a,b) => b.overdue-a.overdue).slice(0,8);
 }
 
-export function summarizeWorkbook(workbook, { now=new Date() } = {}){
-  const selected = pickSheet(workbook);
+export function summarizeWorkbook(workbook, { now=new Date(), confirmedMappings=[] } = {}){
+  const selected = pickSheet(workbook, confirmedMappings);
   if (!selected) {
-    return { ok:false, reason:'没有识别到足够的业务字段', metrics:{}, fields:{}, missing:Object.values(LABELS), warnings:['请至少提供日期、客户、状态、金额、渠道、负责人等字段中的两类。'] };
+    return { ok:false, reason:'没有识别到足够的业务字段', metrics:{}, fields:{}, missing:Object.values(EXPERIENCE_FIELD_LABELS), warnings:['请至少提供日期、客户、状态、金额、渠道、负责人等字段中的两类。'] };
   }
 
   const { sheet, map } = selected;
@@ -142,8 +157,8 @@ export function summarizeWorkbook(workbook, { now=new Date() } = {}){
     return due !== null && due <= cutoff && !taskDone(map.taskStatus ? row[map.taskStatus] : '');
   }).length : null;
 
-  const present = Object.keys(LABELS).filter((key) => map[key]);
-  const missing = Object.keys(LABELS).filter((key) => !map[key]).map((key) => LABELS[key]);
+  const present = Object.keys(EXPERIENCE_FIELD_LABELS).filter((key) => map[key]);
+  const missing = Object.keys(EXPERIENCE_FIELD_LABELS).filter((key) => !map[key]).map((key) => EXPERIENCE_FIELD_LABELS[key]);
   const warnings = [];
   if (!latestDate) warnings.push('未识别到可用日期，本次按主明细表整份数据汇总。');
   if ((workbook?.sheets || []).length > 1) warnings.push(`当前选择“${sheet.name}”作为主明细表，未自动跨表合并，避免重复统计。`);
@@ -156,7 +171,7 @@ export function summarizeWorkbook(workbook, { now=new Date() } = {}){
     period:latestDate || 'all',
     recordCount:rows.length,
     fields:map,
-    fieldCoverage:Math.round(present.length / Object.keys(LABELS).length * 100),
+    fieldCoverage:Math.round(present.length / Object.keys(EXPERIENCE_FIELD_LABELS).length * 100),
     missing,
     warnings,
     metrics:{ records:rows.length, validInquiries, ...status, revenue, overdue },
