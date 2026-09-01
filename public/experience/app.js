@@ -7,6 +7,8 @@ const numberValue = (id) => {
 
 let realBusinessSummary = null;
 let realBusinessSource = null;
+let activeFilePayload = null;
+let activeMappingSuggestions = [];
 
 const taskWeights = { reply:.5, collect:.62, copy:.76, book:.55, remind:.68, follow:.66 };
 const leakLabels = { reply:'存在漏回复风险', booking:'存在漏预约或撞档风险', follow:'存在漏回访/漏跟进风险', renew:'存在漏复诊/续费/续期风险', quote:'存在报价后无人跟进风险', conflict:'存在排班/资源冲突风险' };
@@ -29,11 +31,9 @@ const moduleCatalog = {
   staff:{name:'员工业绩分析', value:['增效','增利'], description:'看处理量、转化、业绩和资源利用率。', needs:'📊 员工/POS/CRM/排班数据 · ⚙️ 指标计算'},
   content:{name:'内容营销', value:['增利'], description:'活动和社媒内容辅助，根据实际业务再开。', needs:'🧠 大模型 · 📣 内容渠道 · 👤 人工审核'}
 };
-
 const statusLabels = { enabled:'✅ 已启用', recommended:'◐ 建议开启', optional:'○ 可选', locked:'🔒 待接数据', na:'— 当前不适用' };
 
 function selectedTasks(){ return [...document.querySelectorAll('#diagTasks input:checked')].map((node) => node.value); }
-
 function moduleStatus(industry, goal, tasks, leak){
   const status = { data:'enabled', task:'enabled', boss:'enabled', reception:'optional', booking:'optional', sales:'optional', retention:'locked', staff:'locked', content:'optional' };
   if (tasks.includes('reply') || tasks.includes('collect') || leak === 'reply') status.reception = 'recommended';
@@ -46,7 +46,6 @@ function moduleStatus(industry, goal, tasks, leak){
   if (industry === 'home') status.retention = 'na';
   return status;
 }
-
 function renderModuleCenter(industry, goal, tasks, leak){
   const status = moduleStatus(industry, goal, tasks, leak);
   $('moduleCards').replaceChildren();
@@ -56,7 +55,7 @@ function renderModuleCenter(industry, goal, tasks, leak){
     if (state === 'recommended') recommended.push(module.name);
     const card = document.createElement('article');
     card.className = `module-card state-${state}`;
-    card.innerHTML = `<div class="module-head"><h3></h3><span></span></div><p class="module-desc"></p><div class="value-tags"></div><div class="needs"></div>`;
+    card.innerHTML = '<div class="module-head"><h3></h3><span></span></div><p class="module-desc"></p><div class="value-tags"></div><div class="needs"></div>';
     card.querySelector('h3').textContent = module.name;
     card.querySelector('.module-head span').textContent = statusLabels[state];
     card.querySelector('.module-desc').textContent = module.description;
@@ -80,7 +79,6 @@ function diagnoseROI(){
   const tasks = selectedTasks();
   const industry = $('diagIndustry').value;
   const goal = $('diagGoal').value;
-
   const core = [volume, avg, duplicate, report, salary, leak, tasks.length ? 1 : null];
   const known = core.filter((value) => value !== null).length;
   const confidence = known >= 6 ? '高' : known >= 3 ? '中' : '低';
@@ -109,13 +107,10 @@ function diagnoseROI(){
     $('diagEfficiencyMain').textContent = '暂不估算效率提升';
     $('diagEfficiencyNote').textContent = '需要业务量、单条耗时和实际步骤后再测算。';
   }
-
   if (salary !== null && lowHours !== null && highHours !== null) {
     const hourly = salary / 174;
     $('diagMoney').textContent = `对应工时价值（仅测算）：${money(lowHours*hourly)}–${money(highHours*hourly)} / 月`;
-  } else {
-    $('diagMoney').textContent = '暂不估算人工金额；不知道月薪也不影响流程诊断。';
-  }
+  } else $('diagMoney').textContent = '暂不估算人工金额；不知道月薪也不影响流程诊断。';
 
   if (ticket !== null && margin !== null && lostCustomers !== null && lostCustomers > 0) {
     const grossPool = lostCustomers * ticket * (margin/100);
@@ -154,7 +149,6 @@ function diagnoseROI(){
   if (lostCustomers === null) missing.push('明确流失客户数（仅估增利金额需要）');
   $('diagMissing').textContent = missing.length ? `${missing.join('、')}。这些都可以在真实试点时再补。` : '基础信息较完整；下一步用 5–7 天真实数据校准。';
   $('diagBasis').textContent = '系统根据已知流程信息做区间诊断。降本看重复工时，增效看处理时间和流程容量，增利只有在客单、毛利和明确流失数据齐全时估金额。';
-
   renderModuleCenter(industry, goal, tasks, leak);
 }
 
@@ -166,10 +160,84 @@ function fileToBase64(file){
     reader.readAsDataURL(file);
   });
 }
+function metricText(value, formatter){ return value === null || value === undefined ? '无法计算' : (formatter ? formatter(value) : String(value)); }
 
-function metricText(value, formatter){
-  if (value === null || value === undefined) return '无法计算';
-  return formatter ? formatter(value) : String(value);
+function ensureFieldMappingPanel(){
+  if ($('fieldMappingPanel')) return;
+  const status = $('businessFileStatus');
+  const panel = document.createElement('div');
+  panel.id = 'fieldMappingPanel';
+  panel.className = 'info-box';
+  panel.hidden = true;
+  const title = document.createElement('b');
+  title.textContent = 'AI 字段映射（可选）';
+  const note = document.createElement('p');
+  note.textContent = 'AI只读取工作表名、列名和类型统计，不读取原始客户业务行。它只给映射建议，必须由你确认后程序才重新计算。';
+  const request = document.createElement('button');
+  request.id = 'requestFieldMapping';
+  request.type = 'button';
+  request.className = 'button secondary wide';
+  request.textContent = 'AI识别模糊字段';
+  const mappingStatus = document.createElement('p');
+  mappingStatus.id = 'fieldMappingStatus';
+  mappingStatus.className = 'fine-print';
+  const suggestions = document.createElement('div');
+  suggestions.id = 'fieldMappingSuggestions';
+  const confirm = document.createElement('button');
+  confirm.id = 'confirmFieldMappings';
+  confirm.type = 'button';
+  confirm.className = 'button primary wide';
+  confirm.textContent = '确认字段并重新计算';
+  confirm.hidden = true;
+  panel.append(title, note, request, mappingStatus, suggestions, confirm);
+  status.insertAdjacentElement('afterend', panel);
+  request.addEventListener('click', requestAiFieldMapping);
+  confirm.addEventListener('click', confirmFieldMappings);
+}
+
+function resetFieldMappingPanel(){
+  ensureFieldMappingPanel();
+  activeMappingSuggestions = [];
+  $('fieldMappingSuggestions').replaceChildren();
+  $('confirmFieldMappings').hidden = true;
+  $('fieldMappingStatus').textContent = '';
+  $('fieldMappingPanel').hidden = true;
+}
+
+function updateFieldMappingAvailability(data){
+  ensureFieldMappingPanel();
+  const missing = data?.summary?.missing || [];
+  const panel = $('fieldMappingPanel');
+  panel.hidden = !(activeFilePayload && missing.length);
+  if (!panel.hidden && !activeMappingSuggestions.length) {
+    $('fieldMappingStatus').textContent = '如果这些列只是命名不标准，可以主动调用大模型识别；这是一次按量 API 调用。';
+  }
+}
+
+function renderMappingSuggestions(data){
+  ensureFieldMappingPanel();
+  activeMappingSuggestions = Array.isArray(data?.mappingSuggestions) ? data.mappingSuggestions : [];
+  const root = $('fieldMappingSuggestions');
+  root.replaceChildren();
+  if (!activeMappingSuggestions.length) {
+    $('confirmFieldMappings').hidden = true;
+    $('fieldMappingStatus').textContent = data?.mappingError || '没有找到足够明确的字段映射建议。';
+    return;
+  }
+  for (const [index, item] of activeMappingSuggestions.entries()) {
+    const row = document.createElement('label');
+    row.className = 'mapping-suggestion';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = item.confidence >= .8;
+    checkbox.dataset.index = String(index);
+    const text = document.createElement('span');
+    text.textContent = `“${item.header}” → ${item.label}（${Math.round(item.confidence*100)}%）${item.reason ? ` · ${item.reason}` : ''}`;
+    row.append(checkbox, text);
+    root.append(row);
+  }
+  $('confirmFieldMappings').hidden = false;
+  $('fieldMappingStatus').textContent = '请逐条确认。高置信建议默认勾选，但仍不会自动用于计算。';
 }
 
 function resetRealSummaryView(){
@@ -188,7 +256,7 @@ function renderRealBusinessSummary(){
     $('businessUsedSheet').textContent = summary.reason || '没有识别到足够业务字段。';
     $('businessCompleteness').textContent = '暂时无法形成经营汇总。';
     $('businessMissing').textContent = (summary.missing || []).join('、') || '请补充更明确的业务字段。';
-    $('businessWarnings').textContent = (summary.warnings || []).join('；') || '当前文件无法用于老板经营问答。';
+    $('businessWarnings').textContent = (summary.warnings || []).join('；') || '当前文件无法用于完整老板经营问答。';
     $('bossDataMode').textContent = '已上传，但字段不足';
     return;
   }
@@ -206,44 +274,85 @@ function renderRealBusinessSummary(){
   $('bossDataMode').textContent = `真实表格汇总 · ${realBusinessSource?.fileName || ''}`;
 }
 
+async function postBusinessSummary(extra = {}){
+  if (!activeFilePayload) throw new Error('请先选择并分析 Excel / CSV');
+  const response = await fetch('/api/experience-summary', {
+    method:'POST', headers:{ 'Content-Type':'application/json' },
+    body:JSON.stringify({ file:activeFilePayload, ...extra })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
+  realBusinessSummary = data.summary || null;
+  realBusinessSource = data.source || { fileName:activeFilePayload.name };
+  renderRealBusinessSummary();
+  updateFieldMappingAvailability(data);
+  bossAnswer();
+  return data;
+}
+
 async function analyzeBusinessFile(){
   const file = $('businessFile').files?.[0];
   if (!file) { $('businessFileStatus').textContent = '请先选择 Excel 或 CSV。'; return; }
   if (file.size > 3 * 1024 * 1024) { $('businessFileStatus').textContent = '文件超过 3 MB，请先精简后再试。'; return; }
   $('analyzeBusinessFile').disabled = true;
   $('businessFileStatus').textContent = '正在读取并计算表格，请保持页面打开…';
+  resetFieldMappingPanel();
   try {
     const contentBase64 = await fileToBase64(file);
-    const response = await fetch('/api/experience-summary', {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
-      body:JSON.stringify({ file:{ name:file.name, contentBase64 } })
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `请求失败 (${response.status})`);
-    realBusinessSummary = data.summary || null;
-    realBusinessSource = data.source || { fileName:file.name };
-    $('businessFileStatus').textContent = realBusinessSummary?.ok ? '已完成真实表格汇总；老板问答已切换到真实数据模式。' : '表格已读取，但字段不足，老板问答会明确提示无法判断的部分。';
-    renderRealBusinessSummary();
-    bossAnswer();
+    activeFilePayload = { name:file.name, contentBase64 };
+    const data = await postBusinessSummary();
+    $('businessFileStatus').textContent = data.summary?.ok ? '已完成真实表格汇总；老板问答已切换到真实数据模式。' : '表格已读取，但字段不足；可继续用现有数据分析，或选择 AI 识别模糊字段。';
   } catch (error) {
     realBusinessSummary = { ok:false, reason:error.message || '表格分析失败', missing:[], warnings:['请检查文件格式后重试。'], metrics:{} };
     realBusinessSource = { fileName:file.name };
     $('businessFileStatus').textContent = `分析失败：${error.message || '请重试'}`;
     renderRealBusinessSummary();
     bossAnswer();
-  } finally {
-    $('analyzeBusinessFile').disabled = false;
-  }
+  } finally { $('analyzeBusinessFile').disabled = false; }
+}
+
+async function requestAiFieldMapping(){
+  if (!activeFilePayload) return;
+  $('requestFieldMapping').disabled = true;
+  $('fieldMappingStatus').textContent = '正在调用大模型识别列名。只发送工作表名、列名和类型统计…';
+  try {
+    const data = await postBusinessSummary({ requestFieldMapping:true });
+    renderMappingSuggestions(data);
+  } catch (error) {
+    $('fieldMappingStatus').textContent = `AI字段识别失败：${error.message || '请稍后重试'}`;
+  } finally { $('requestFieldMapping').disabled = false; }
+}
+
+async function confirmFieldMappings(){
+  const checked = [...$('fieldMappingSuggestions').querySelectorAll('input[type="checkbox"]:checked')];
+  const confirmedMappings = checked.map((node) => {
+    const item = activeMappingSuggestions[Number(node.dataset.index)];
+    return item ? { sheet:item.sheet, header:item.header, field:item.field } : null;
+  }).filter(Boolean);
+  if (!confirmedMappings.length) { $('fieldMappingStatus').textContent = '请至少确认一条字段映射。'; return; }
+  $('confirmFieldMappings').disabled = true;
+  $('fieldMappingStatus').textContent = '正在按你确认的字段重新计算；这一步不再调用大模型。';
+  try {
+    const data = await postBusinessSummary({ confirmedMappings });
+    activeMappingSuggestions = [];
+    $('fieldMappingSuggestions').replaceChildren();
+    $('confirmFieldMappings').hidden = true;
+    $('fieldMappingStatus').textContent = data.summary?.ok ? '已按确认字段重新计算经营汇总。' : '已应用确认字段，但仍缺少足够字段；可以继续补充。';
+    $('businessFileStatus').textContent = '已应用人工确认的字段映射；老板问答使用重新计算后的真实汇总。';
+  } catch (error) {
+    $('fieldMappingStatus').textContent = `重新计算失败：${error.message || '请重试'}`;
+  } finally { $('confirmFieldMappings').disabled = false; }
 }
 
 function clearBusinessFile(){
   realBusinessSummary = null;
   realBusinessSource = null;
+  activeFilePayload = null;
   $('businessFile').value = '';
   $('businessFileStatus').textContent = '已清除真实表格，老板问答恢复虚构演示数据。';
   $('bossDataMode').textContent = '演示数据';
   resetRealSummaryView();
+  resetFieldMappingPanel();
   bossAnswer();
 }
 
@@ -253,7 +362,6 @@ const business = {
   legal:{inquiries:22,valid:18,appointments:10,arrivals:8,completed:4,revenue:38000,overdue:7,noshow:2,conflicts:0,channel:'客户转介绍',owner:'行政小叶',repeatOps:12,reportMinutes:60,idleSlots:0,recoverable:3,grossProfitPerOrder:2800},
   home:{inquiries:28,valid:21,appointments:12,arrivals:9,completed:3,revenue:58000,overdue:6,noshow:3,conflicts:1,channel:'抖音',owner:'销售小程',repeatOps:16,reportMinutes:55,idleSlots:1,recoverable:3,grossProfitPerOrder:4200}
 };
-
 function demoBossAnswer(){
   const d = business[$('bossIndustry').value];
   const q = $('bossQuestion').value.trim();
@@ -263,23 +371,20 @@ function demoBossAnswer(){
   if (q.includes('问题')) return `【降本】今天仍有约 ${d.repeatOps} 次重复登记/整理动作，老板或店长还要花约 ${d.reportMinutes} 分钟做汇总。\n\n【增效】当前有 ${d.overdue} 项逾期、${d.noshow} 名未到店/未完成预约${d.conflicts ? `、${d.conflicts} 处排班或资源冲突` : ''}。\n\n【增利】有 ${d.recoverable} 个可优先挽回的客户/机会，按虚构演示单笔毛利 ${money(d.grossProfitPerOrder)} 计算，机会池约 ${money(profitPool)}；不是保证成交。`;
   return `截至当前，共有 ${d.inquiries} 条业务记录，其中 ${d.valid} 条有效，${d.appointments} 条进入预约或下一阶段，${d.arrivals} 条已到店/到诊，${d.completed} 条已完成或成交，记录营业额 ${money(d.revenue)}。\n\n【降本】演示数据中约有 ${d.repeatOps} 次重复登记/整理动作，老板/店长还需约 ${d.reportMinutes} 分钟人工汇总。\n\n【增效】当前 ${d.overdue} 项任务逾期、${d.noshow} 名客户未到店/未完成预约${d.conflicts ? `，另有 ${d.conflicts} 处排班或资源冲突` : ''}。\n\n【增利】有 ${d.recoverable} 个可优先挽回的客户/机会${d.idleSlots ? `，以及 ${d.idleSlots} 个可尝试填补的空档` : ''}。按虚构演示单笔毛利 ${money(d.grossProfitPerOrder)} 计算，机会池约 ${money(profitPool)}；这里只是机会估算。`;
 }
-
 function realBossAnswer(){
   const summary = realBusinessSummary;
   const q = $('bossQuestion').value.trim();
-  if (!summary?.ok) {
-    return `当前上传文件还不足以形成可靠经营汇总，所以这次不会退回虚构数据代替真实数据。\n\n目前原因：${summary?.reason || '关键字段不足'}。\n需要补充：${summary?.missing?.length ? summary.missing.join('、') : '日期、客户、状态、金额、渠道、负责人等基础字段'}。`;
-  }
+  if (!summary?.ok) return `当前上传文件还不足以形成可靠经营汇总，所以这次不会退回虚构数据代替真实数据。\n\n目前原因：${summary?.reason || '关键字段不足'}。\n需要补充：${summary?.missing?.length ? summary.missing.join('、') : '日期、客户、状态、金额、渠道、负责人等基础字段'}。`;
   const m = summary.metrics || {};
   const periodLabel = summary.period === 'all' ? '整份主明细表' : `文件中最近日期 ${summary.period}`;
   if (q.includes('渠道')) {
-    if (!summary.channels?.length) return `暂时无法判断哪个渠道表现更好，因为当前数据缺少渠道字段。\n\n已有数据仍可继续用于其他经营分析；补充“渠道/来源”列后再比较记录量和营业额。`;
+    if (!summary.channels?.length) return '暂时无法判断哪个渠道表现更好，因为当前数据缺少渠道字段。\n\n已有数据仍可继续用于其他经营分析；补充“渠道/来源”列后再比较记录量和营业额。';
     const top = summary.channels[0];
     const revenueText = summary.fields?.amount ? `，记录营业额 ${money(top.revenue)}` : '';
     return `${periodLabel}里，记录量最多的渠道是 ${top.channel}，共有 ${top.records} 条记录${revenueText}。\n\n这只能说明当前表里的业务结果，暂时不能判断“最赚钱”，因为还缺各渠道广告成本和毛利。`;
   }
   if (q.includes('谁') || q.includes('跟进')) {
-    if (!summary.overdueOwners?.length) return `暂时无法判断谁还有客户没跟进。\n\n需要同时有“负责人”和“下次跟进/截止时间”字段；现有数据仍会继续分析能确定的部分。`;
+    if (!summary.overdueOwners?.length) return '暂时无法判断谁还有客户没跟进。\n\n需要同时有“负责人”和“下次跟进/截止时间”字段；现有数据仍会继续分析能确定的部分。';
     const top = summary.overdueOwners[0];
     return `${periodLabel}里，${top.owner}有 ${top.overdue} 项逾期待办，是当前最需要先处理的负责人。\n\n建议先按逾期时长和客户阶段排序，不需要老板再逐个翻表。`;
   }
@@ -287,33 +392,27 @@ function realBossAnswer(){
     const issues = [];
     if (m.overdue !== null && m.overdue !== undefined) issues.push(`${m.overdue} 项逾期任务`);
     if (m.noShows !== null && m.noShows !== undefined) issues.push(`${m.noShows} 名未到店/爽约`);
-    const issueText = issues.length ? issues.join('、') : '现有字段暂时无法直接计算逾期和爽约异常';
-    return `基于 ${periodLabel}：${issueText}。\n\n【降本】这份表的汇总已经由程序完成，不需要老板再手工计算这些指标。\n【增效】能确认的异常优先进入待办；无法计算的指标会明确提示缺列。\n【增利】如果存在爽约或逾期客户，可以作为挽回机会，但当前没有毛利/成本数据，所以不估算利润金额。\n\n缺少的数据：${summary.missing?.length ? summary.missing.join('、') : '关键字段较完整'}。`;
+    return `基于 ${periodLabel}：${issues.length ? issues.join('、') : '现有字段暂时无法直接计算逾期和爽约异常'}。\n\n【降本】这份表的汇总已经由程序完成，不需要老板再手工计算这些指标。\n【增效】能确认的异常优先进入待办；无法计算的指标会明确提示缺列。\n【增利】如果存在爽约或逾期客户，可以作为挽回机会，但当前没有毛利/成本数据，所以不估算利润金额。\n\n缺少的数据：${summary.missing?.length ? summary.missing.join('、') : '关键字段较完整'}。`;
   }
   const lines = [`按 ${periodLabel}，识别 ${m.records ?? 0} 条业务记录。`];
-  lines.push(`预约/下一阶段：${m.appointments === null || m.appointments === undefined ? '暂时无法判断' : m.appointments}；到店/到诊：${m.arrivals === null || m.arrivals === undefined ? '暂时无法判断' : m.arrivals}；完成/成交：${m.completed === null || m.completed === undefined ? '暂时无法判断' : m.completed}。`);
-  lines.push(`营业额：${m.revenue === null || m.revenue === undefined ? '暂时无法判断（缺金额字段）' : money(m.revenue)}。`);
-  lines.push(`\n【降本】这次经营汇总已由程序自动完成，不需要老板再把同一份表手工汇总一遍；要估实际节省多少工时，可结合体验01的人工时间数据。`);
+  lines.push(`预约/下一阶段：${m.appointments == null ? '暂时无法判断' : m.appointments}；到店/到诊：${m.arrivals == null ? '暂时无法判断' : m.arrivals}；完成/成交：${m.completed == null ? '暂时无法判断' : m.completed}。`);
+  lines.push(`营业额：${m.revenue == null ? '暂时无法判断（缺金额字段）' : money(m.revenue)}。`);
+  lines.push('\n【降本】这次经营汇总已由程序自动完成，不需要老板再把同一份表手工汇总一遍；要估实际节省多少工时，可结合体验01的人工时间数据。');
   const efficiencyParts = [];
-  if (m.overdue !== null && m.overdue !== undefined) efficiencyParts.push(`${m.overdue} 项逾期任务`);
-  if (m.noShows !== null && m.noShows !== undefined) efficiencyParts.push(`${m.noShows} 名未到店/爽约`);
+  if (m.overdue != null) efficiencyParts.push(`${m.overdue} 项逾期任务`);
+  if (m.noShows != null) efficiencyParts.push(`${m.noShows} 名未到店/爽约`);
   lines.push(`【增效】${efficiencyParts.length ? `当前可直接识别 ${efficiencyParts.join('、')}，优先处理这些异常。` : '当前状态/截止时间字段不足，暂时无法计算逾期和爽约；其他已知指标仍可继续使用。'}`);
-  if (m.revenue !== null && m.revenue !== undefined) lines.push(`【增利】当前能确认营业额 ${money(m.revenue)}，但利润还需要成本或毛利率；不会把营业额直接当利润。${m.noShows ? `另有 ${m.noShows} 名未到店/爽约客户可作为挽回机会，但暂不估金额。` : ''}`);
-  else lines.push('【增利】当前缺少金额/营业额字段，暂时不能判断收入和利润；如果补充金额、成本/毛利率，再继续测算。');
+  lines.push(m.revenue != null ? `【增利】当前能确认营业额 ${money(m.revenue)}，但利润还需要成本或毛利率；不会把营业额直接当利润。${m.noShows ? `另有 ${m.noShows} 名未到店/爽约客户可作为挽回机会，但暂不估金额。` : ''}` : '【增利】当前缺少金额/营业额字段，暂时不能判断收入和利润；如果补充金额、成本/毛利率，再继续测算。');
   if (summary.missing?.length) lines.push(`\n还缺：${summary.missing.join('、')}。补充后可继续提高分析完整度。`);
   return lines.join('\n');
 }
-
 function bossAnswer(){
   const dataMode = realBusinessSummary ? 'real' : 'demo';
-  const text = dataMode === 'real' ? realBossAnswer() : demoBossAnswer();
-  $('bossAnswer').textContent = text;
+  $('bossAnswer').textContent = dataMode === 'real' ? realBossAnswer() : demoBossAnswer();
   if (dataMode === 'real') {
     const summary = realBusinessSummary;
     $('bossSource').textContent = `数据来源：${realBusinessSource?.fileName || '上传表格'} · 主明细表：${summary?.usedSheet || '未识别'} · 数据完整度：${summary?.fieldCoverage ?? 0}% · 原始客户明细未返回此页面。`;
-  } else {
-    $('bossSource').textContent = '数据来源：虚构演示台账 · 未连接真实商家系统。';
-  }
+  } else $('bossSource').textContent = '数据来源：虚构演示台账 · 未连接真实商家系统。';
 }
 
 $('roiForm').addEventListener('submit', (event) => { event.preventDefault(); diagnoseROI(); });
@@ -325,6 +424,8 @@ $('bossIndustry').addEventListener('change', bossAnswer);
 $('analyzeBusinessFile').addEventListener('click', analyzeBusinessFile);
 $('clearBusinessFile').addEventListener('click', clearBusinessFile);
 
+ensureFieldMappingPanel();
 diagnoseROI();
 resetRealSummaryView();
+resetFieldMappingPanel();
 bossAnswer();
