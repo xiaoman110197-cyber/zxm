@@ -33,7 +33,7 @@ test('missing columns stay unavailable instead of becoming zero', () => {
 test('chooses a detailed sheet instead of a summary sheet', () => {
   const workbook = { sheets:[
     { name:'汇总', headers:['指标','数值'], rows:[{ 指标:'营业额', 数值:999 }] },
-    { name:'订单明细', headers:['日期','客户','状态','营业额'], rows:[{ 日期:'2026-09-02', 客户:'A', 状态:'已成交', 营业额:100 }, { 日期:'2026-09-02', 客户:'B', 状态:'已成交', 营额:200 }] }
+    { name:'订单明细', headers:['日期','客户','状态','营业额'], rows:[{ 日期:'2026-09-02', 客户:'A', 状态:'已成交', 营业额:100 }, { 日期:'2026-09-02', 客户:'B', 状态:'已成交', 营业额:200 }] }
   ] };
   const summary = summarizeWorkbook(workbook);
   assert.equal(summary.usedSheet, '订单明细');
