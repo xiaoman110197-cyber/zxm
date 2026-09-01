@@ -27,6 +27,22 @@ test('profit amount is not estimated unless ticket margin and loss data are all 
   assert.match(js, /暂不估算利润金额/);
 });
 
+test('experience accepts real Excel or CSV and calls the aggregate-only summary api', () => {
+  assert.match(html, /id="businessFile"/);
+  assert.match(html, /\.xlsx/);
+  assert.match(html, /\.csv/);
+  assert.match(js, /\/api\/experience-summary/);
+  assert.match(js, /fileToBase64/);
+  assert.match(js, /realBusinessSummary/);
+});
+
+test('uploaded business summary replaces demo data for boss query without treating missing values as zero', () => {
+  assert.match(js, /realBusinessSummary\s*\?/);
+  assert.match(js, /无法计算|暂时无法判断/);
+  assert.match(js, /missing/);
+  assert.match(html, /数据完整度|缺少的数据/);
+});
+
 test('boss today query produces a browser result instead of a dead button', () => {
   assert.match(js, /function bossAnswer/);
   assert.match(js, /bossAsk/);
