@@ -18,23 +18,23 @@
     <section class="hero">
       <div class="wrap hero-grid">
         <div>
-          <span class="eyebrow">独立体验页 · 当前为虚构/演示数据</span>
+          <span class="eyebrow">独立体验页 · 支持演示数据与真实 Excel/CSV</span>
           <h1>先看哪里能<strong>降本</strong>、哪里能<strong>增效</strong>、哪里还有<strong>增利</strong>机会。</h1>
-          <p>这页只做体验和初步测算。真正合作时，再根据行业、Excel/POS/CRM/预约系统和现有办公工具组合具体模块。</p>
+          <p>先用已知业务情况做流程诊断，也可以上传脱敏 Excel/CSV，让“今天怎样”基于真实汇总结果回答。正式合作后再按行业和现有系统组合模块。</p>
           <div class="actions">
             <a class="button primary" href="#roi">开始经营诊断</a>
-            <a class="button secondary" href="#boss">问“今天怎样？”</a>
+            <a class="button secondary" href="#data">上传经营表格</a>
           </div>
         </div>
         <aside class="demo-card">
-          <span>虚构按摩门店 · 演示摘要</span>
+          <span>虚构按摩门店 · 未上传数据时的演示摘要</span>
           <div class="metrics">
             <div><small>咨询</small><b>32</b></div>
             <div><small>预约</small><b>24</b></div>
             <div><small>到店</small><b>16</b></div>
             <div><small>营业额</small><b>¥11,860</b></div>
           </div>
-          <p>5 项逾期 · 3 名爽约 · 1 处排班冲突</p>
+          <p>上传 Excel/CSV 后，老板问答会优先使用你的真实聚合结果。</p>
         </aside>
       </div>
     </section>
@@ -57,9 +57,7 @@
                 </select>
               </label>
               <label>每天咨询 / 预约量
-                <select id="diagVolume">
-                  <option value="">不清楚</option><option value="10">约 10 条</option><option value="25">约 25 条</option><option value="50">约 50 条</option><option value="100">约 100 条</option><option value="150">150 条以上</option>
-                </select>
+                <select id="diagVolume"><option value="">不清楚</option><option value="10">约 10 条</option><option value="25">约 25 条</option><option value="50">约 50 条</option><option value="100">约 100 条</option><option value="150">150 条以上</option></select>
               </label>
               <fieldset class="full">
                 <legend>一条新客户进来后，员工通常要做哪些事？</legend>
@@ -134,14 +132,49 @@
       </div>
     </section>
 
-    <section class="section" id="boss">
+    <section class="section" id="data">
+      <div class="wrap">
+        <span class="eyebrow">真实数据体验</span>
+        <h2>上传 Excel / CSV，让老板问答基于你的真实汇总。</h2>
+        <p class="lead">支持 .xlsx / .xls / .csv，最大 3 MB。服务端只返回聚合指标、字段识别和缺失项，不把客户明细返回到这个体验页。</p>
+        <div class="two-col">
+          <div class="panel">
+            <label>经营表格
+              <input id="businessFile" type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv">
+            </label>
+            <button class="button primary wide" id="analyzeBusinessFile" type="button">分析这份表格</button>
+            <button class="button secondary wide" id="clearBusinessFile" type="button">清除并恢复演示数据</button>
+            <p class="fine-print" id="businessFileStatus">尚未上传。老板问答当前使用虚构演示数据。</p>
+            <div class="info-box"><b>识别范围</b><p id="businessUsedSheet">等待上传。</p></div>
+            <div class="info-box"><b>数据完整度</b><p id="businessCompleteness">等待上传。</p></div>
+            <div class="info-box warning"><b>缺少的数据</b><p id="businessMissing">等待上传。</p></div>
+            <div class="info-box"><b>分析提醒</b><p id="businessWarnings">等待上传。</p></div>
+          </div>
+          <div class="panel result-panel">
+            <h3>程序计算出的经营摘要</h3>
+            <div class="value-grid">
+              <article><span>业务记录</span><b id="realRecords">—</b><p>按文件最近日期或整份主明细表</p></article>
+              <article><span>预约/下一阶段</span><b id="realAppointments">—</b><p>没有状态列时显示无法计算</p></article>
+              <article><span>到店/到诊</span><b id="realArrivals">—</b><p>基于状态字段</p></article>
+              <article><span>完成/成交</span><b id="realCompleted">—</b><p>基于状态字段</p></article>
+              <article><span>营业额</span><b id="realRevenue">—</b><p>基于金额字段</p></article>
+              <article><span>逾期任务</span><b id="realOverdue">—</b><p>需要截止时间字段</p></article>
+            </div>
+            <div class="deployment-note"><b>当前实现：</b>⚙️ 程序读取 + 确定性计算。表头特别混乱、字段语义不清时，下一阶段再加 🧠 大模型字段映射，不在本版里猜。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="boss">
       <div class="wrap">
         <span class="eyebrow">体验 03</span>
         <h2>老板直接问：“今天怎样？”</h2>
-        <p class="lead">当前使用虚构演示经营数据。按钮会在浏览器里真实生成结果；正式版再接真实经营数据。</p>
+        <p class="lead">未上传表格时使用虚构演示数据；上传后优先基于真实聚合指标回答。数据缺失时继续分析已知部分，并明确告诉你还缺什么。</p>
         <div class="two-col">
           <div class="panel">
-            <label>行业
+            <div class="info-box"><b>当前数据模式</b><p id="bossDataMode">演示数据</p></div>
+            <label>演示行业（仅演示模式生效）
               <select id="bossIndustry"><option value="massage">按摩 / SPA</option><option value="clinic">中医 / 口腔 / 医美</option><option value="legal">律所 / 咨询 / 保险</option><option value="home">装修 / 汽车服务</option></select>
             </label>
             <div class="quick-actions">
@@ -157,18 +190,18 @@
           </div>
           <div class="panel answer-panel">
             <h3>老板收到的回答</h3>
-            <div id="bossAnswer" class="answer">点击“查询经营情况”后，这里会根据虚构经营数据生成回答。</div>
+            <div id="bossAnswer" class="answer">点击“查询经营情况”后显示。</div>
             <p id="bossSource" class="fine-print">数据来源：虚构演示数据。</p>
-            <div class="deployment-note"><b>正式部署需要：</b>🧠 大模型 + 📊 经营数据 + ⚙️ 指标计算 + 💬 WorkBuddy / 企业微信 / 飞书 / 钉钉等消息入口（可选）。</div>
+            <div class="deployment-note"><b>正式部署需要：</b>当前真实表格模式已接 📊 Excel/CSV + ⚙️ 指标计算；要支持任意自然语言和自动抓 POS/CRM/预约系统，再接 🧠 大模型 + 🔌 连接器 + 💬 WorkBuddy / 企业微信 / 飞书 / 钉钉等入口。</div>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="section alt">
+    <section class="section">
       <div class="wrap next-step">
-        <div><span class="eyebrow">真实版入口</span><h2>要上传 Excel / CSV、图片或做真实经营问诊？</h2><p>回到现有老板经营问诊器。那一页已经接真实文件分析和诊断 API。</p></div>
-        <a class="button primary" href="/">进入真实经营问诊器</a>
+        <div><span class="eyebrow">完整经营问诊</span><h2>要分析 PDF、Word、图片或继续做 AI 经营问诊？</h2><p>回到现有老板经营问诊器，使用已经存在的真实文件分析和诊断链路。</p></div>
+        <a class="button primary" href="/">进入老板经营问诊器</a>
       </div>
     </section>
   </main>
