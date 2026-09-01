@@ -43,6 +43,18 @@ test('uploaded business summary replaces demo data for boss query without treati
   assert.match(html, /数据完整度|缺少的数据/);
 });
 
+test('ambiguous spreadsheet fields require an explicit AI mapping request and owner confirmation', () => {
+  assert.match(html, /id="requestFieldMapping"/);
+  assert.match(html, /id="fieldMappingPanel"/);
+  assert.match(html, /id="fieldMappingSuggestions"/);
+  assert.match(html, /id="confirmFieldMappings"/);
+  assert.match(html, /只读取.*列名.*类型统计|列名.*类型统计/);
+  assert.match(js, /requestFieldMapping\s*:\s*true/);
+  assert.match(js, /mappingSuggestions/);
+  assert.match(js, /confirmedMappings/);
+  assert.match(js, /confirmFieldMappings/);
+});
+
 test('boss today query produces a browser result instead of a dead button', () => {
   assert.match(js, /function bossAnswer/);
   assert.match(js, /bossAsk/);
