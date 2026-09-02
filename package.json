@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "build": "rm -rf dist && cp -R public dist && node scripts/verify-server-imports.js"
+    "build": "node scripts/live-consultation-smoke.js && rm -rf dist && cp -R public dist && node scripts/verify-server-imports.js"
   },
   "dependencies": {
     "@tesseract.js-data/chi_sim": "1.0.0",
