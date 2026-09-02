@@ -63,6 +63,18 @@ test('ambiguous spreadsheet fields require an explicit AI mapping request and ow
   assert.match(js, /confirmedMappings/);
 });
 
+test('AI field mapping visibly shows provider model status request id and returned mappings', () => {
+  assert.match(js, /fieldMappingTrace/);
+  assert.match(js, /renderMappingTrace/);
+  assert.match(js, /aiMappingTrace/);
+  assert.match(js, /供应商/);
+  assert.match(js, /模型/);
+  assert.match(js, /调用状态/);
+  assert.match(js, /请求ID/);
+  assert.match(js, /DeepSeek/);
+  assert.match(js, /mappingCount|映射/);
+});
+
 test('V7 real-data boss query uses AI for arbitrary questions and keeps follow-up history', () => {
   assert.match(browserJs, /async function askBossQuestion/);
   assert.match(browserJs, /\/api\/experience-question/);
