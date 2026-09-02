@@ -179,3 +179,106 @@ export function summarizeWorkbook(workbook, { now=new Date(), confirmedMappings=
     overdueOwners:overdueOwners(rows, map, cutoff)
   };
 }
+
+function finiteNumber(value){
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function percentage(numerator, denominator){
+  const n = finiteNumber(numerator);
+  const d = finiteNumber(denominator);
+  if (n === null || d === null || d <= 0) return null;
+  return Math.round((n / d) * 1000) / 10;
+}
+
+function safeList(value, mapper){
+  return Array.isArray(value) ? value.slice(0, 8).map(mapper).filter(Boolean) : [];
+}
+
+export function buildBusinessQuestionContext(summary, { source={} } = {}){
+  if (!summary?.ok) {
+    return {
+      available:false,
+      reason:String(summary?.reason || '当前没有可靠经营汇总').slice(0,240),
+      source:{ fileName:String(source?.fileName || '').slice(0,180) },
+      period:summary?.period || null,
+      facts:{},
+      derived:{},
+      channels:[],
+      overdueOwners:[],
+      missing:Array.isArray(summary?.missing) ? summary.missing.slice(0,16).map(String) : [],
+      warnings:Array.isArray(summary?.warnings) ? summary.warnings.slice(0,12).map(String) : [],
+      availability:{ revenue:false, profit:false, channels:false, ownerOverdue:false },
+      unavailable:['可靠经营汇总','利润/毛利']
+    };
+  }
+
+  const metrics = summary.metrics || {};
+  const facts = {
+    records:finiteNumber(metrics.records),
+    validInquiries:finiteNumber(metrics.validInquiries),
+    appointments:finiteNumber(metrics.appointments),
+    arrivals:finiteNumber(metrics.arrivals),
+    completed:finiteNumber(metrics.completed),
+    noShows:finiteNumber(metrics.noShows),
+    cancelled:finiteNumber(metrics.cancelled),
+    revenue:finiteNumber(metrics.revenue),
+    overdue:finiteNumber(metrics.overdue),
+    profit:finiteNumber(metrics.profit),
+    grossProfit:finiteNumber(metrics.grossProfit)
+  };
+
+  const derived = {
+    arrivalRate:percentage(facts.arrivals, facts.appointments),
+    completionRate:percentage(facts.completed, facts.appointments),
+    noShowRate:percentage(facts.noShows, facts.appointments),
+    averageRevenuePerCompleted:facts.revenue !== null && facts.completed !== null && facts.completed > 0
+      ? Math.round((facts.revenue / facts.completed) * 100) / 100
+      : null
+  };
+
+  const channels = safeList(summary.channels, (item) => {
+    if (!item) return null;
+    const channel = String(item.channel ?? '').trim().slice(0,80);
+    if (!channel) return null;
+    return { channel, records:finiteNumber(item.records), revenue:finiteNumber(item.revenue) };
+  });
+  const overdueOwners = safeList(summary.overdueOwners, (item) => {
+    if (!item) return null;
+    const owner = String(item.owner ?? '').trim().slice(0,80);
+    if (!owner) return null;
+    return { owner, overdue:finiteNumber(item.overdue) };
+  });
+
+  const profitAvailable = facts.profit !== null || facts.grossProfit !== null;
+  const unavailable = [];
+  if (facts.revenue === null) unavailable.push('营业额');
+  if (facts.appointments === null) unavailable.push('预约/业务阶段');
+  if (facts.overdue === null) unavailable.push('逾期任务');
+  if (!channels.length) unavailable.push('渠道表现');
+  if (!overdueOwners.length) unavailable.push('负责人逾期分布');
+  if (!profitAvailable) unavailable.push('利润/毛利');
+
+  return {
+    available:true,
+    source:{
+      fileName:String(source?.fileName || '').slice(0,180),
+      usedSheet:String(summary.usedSheet || '').slice(0,120)
+    },
+    period:summary.period || 'all',
+    fieldCoverage:Number.isFinite(summary.fieldCoverage) ? Math.max(0, Math.min(100, Math.round(summary.fieldCoverage))) : null,
+    facts,
+    derived,
+    channels,
+    overdueOwners,
+    missing:Array.isArray(summary.missing) ? summary.missing.slice(0,16).map((item) => String(item).slice(0,120)) : [],
+    warnings:Array.isArray(summary.warnings) ? summary.warnings.slice(0,12).map((item) => String(item).slice(0,240)) : [],
+    availability:{
+      revenue:facts.revenue !== null,
+      profit:profitAvailable,
+      channels:channels.length > 0,
+      ownerOverdue:overdueOwners.length > 0
+    },
+    unavailable
+  };
+}
