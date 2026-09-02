@@ -51,3 +51,34 @@ test('DeepSeek provider maps ambiguous spreadsheet headers without asking for ra
   assert.match(body.messages[0].content, /原始.*业务行|业务行.*原始/);
   assert.deepEqual(result.mappings[0], { sheet:'门店流水', header:'到账口径', field:'amount', confidence:.91, reason:'表示到账金额' });
 });
+
+test('V7 DeepSeek provider answers arbitrary boss questions from deterministic context without recalculating profit', async () => {
+  let body;
+  const provider = createDeepSeekProvider({
+    apiKey:'deepseek-key',
+    fetchImpl:async (_url, init) => {
+      body = JSON.parse(init.body);
+      return new Response(JSON.stringify({
+        choices:[{ message:{ content:JSON.stringify({
+          overview:'今天有几项经营问题需要先处理。',
+          cost:'重复整理可以继续减少。',
+          efficiency:'优先处理逾期任务。',
+          profit:'需要成本或毛利率才能判断利润。',
+          actions:['先处理逾期任务'],
+          limits:['利润数据不足']
+        }) } }]
+      }), { status:200 });
+    }
+  });
+  assert.equal(typeof provider.answerExperienceQuestion, 'function');
+  const result = await provider.answerExperienceQuestion({
+    question:'为什么今天看起来营业额还可以但你不说利润好？',
+    context:{ facts:{ revenue:11860 }, derived:{}, availability:{ profit:false }, unavailable:['利润/毛利'] },
+    history:[{ role:'owner', text:'今天怎样？' }, { role:'assistant', text:'营业额已确认，但利润暂时无法判断。' }]
+  });
+  assert.deepEqual(body.thinking, { type:'disabled' });
+  assert.match(body.messages[0].content, /营业额.*不.*利润|利润.*营业额/);
+  assert.match(body.messages[0].content, /不得重新计算|不要重新计算/);
+  assert.match(body.messages[0].content, /history|历史|前文/);
+  assert.deepEqual(result.actions, ['先处理逾期任务']);
+});
