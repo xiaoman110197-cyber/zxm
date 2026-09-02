@@ -6,13 +6,15 @@ const html = await readFile(new URL('../../public/experience/index.html', import
 const trace = await readFile(new URL('../../public/experience/trace.js', import.meta.url), 'utf8');
 const js = await readFile(new URL('../../public/experience/app.js', import.meta.url), 'utf8');
 const v7 = await readFile(new URL('../../public/experience/v7.js', import.meta.url), 'utf8');
-const browserJs = `${trace}\n${js}\n${v7}`;
+const consultation = await readFile(new URL('../../public/experience/consultation.js', import.meta.url), 'utf8');
+const browserJs = `${trace}\n${js}\n${v7}\n${consultation}`;
 const css = await readFile(new URL('../../public/experience/styles.css', import.meta.url), 'utf8');
 
 test('experience browser bundles parse as JavaScript', () => {
   assert.doesNotThrow(() => new Function(trace));
   assert.doesNotThrow(() => new Function(js));
   assert.doesNotThrow(() => new Function(v7));
+  assert.doesNotThrow(() => new Function(consultation));
 });
 
 test('experience is a separate standalone page', () => {
@@ -97,6 +99,25 @@ test('real business summary numbers carry metric-specific units instead of bare 
   assert.match(trace, /realCompleted[^\n]*笔/);
   assert.match(trace, /realOverdue[^\n]*项/);
   assert.match(trace, /applyRealMetricUnits/);
+});
+
+test('Experience 04 exposes AI consultation with operator-controlled reply and no real send endpoint', () => {
+  assert.match(html, /体验 04/);
+  assert.match(html, /AI 客户咨询助手/);
+  assert.match(html, /id="consultationIndustry"/);
+  assert.match(html, /id="consultationChannel"/);
+  assert.match(html, /id="consultationConversation"/);
+  assert.match(html, /id="consultationBusinessContext"/);
+  assert.match(html, /id="consultationAnalyze"/);
+  assert.match(html, /id="consultationReply"/);
+  assert.match(html + consultation, /企业微信[^\n]*待接|待接接口/);
+  assert.match(html + consultation, /抖音[^\n]*待接|待接接口/);
+  assert.match(consultation, /\/api\/experience-consultation/);
+  assert.match(consultation, /重新生成/);
+  assert.match(consultation, /暂不回复/);
+  assert.match(consultation, /已批准.*没有对客户发送|未连接外部渠道/);
+  assert.doesNotMatch(consultation, /\/api\/[^'"\s]*send/i);
+  assert.match(html + consultation, /操作人员.*最终|最终发送决定权/);
 });
 
 test('V7 real-data boss query uses AI for arbitrary questions and keeps follow-up history', () => {
