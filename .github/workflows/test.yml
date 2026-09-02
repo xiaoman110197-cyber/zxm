@@ -20,6 +20,21 @@ jobs:
           script: |
             const token = await core.getIDToken();
             core.setSecret(token);
+            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+            const claims = Object.fromEntries([
+              'iss',
+              'aud',
+              'repository',
+              'repository_id',
+              'repository_owner',
+              'repository_owner_id',
+              'ref',
+              'sub',
+              'environment',
+              'workflow_ref',
+              'event_name',
+            ].map((key) => [key, payload[key] ?? null]));
+            core.info(`OIDC_MATCHING_CLAIMS ${JSON.stringify(claims)}`);
             core.setOutput('token', token);
 
       - name: Test protected Preview and live DeepSeek
