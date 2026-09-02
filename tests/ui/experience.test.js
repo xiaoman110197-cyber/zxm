@@ -10,10 +10,12 @@ test('experience browser bundle parses as JavaScript', () => {
   assert.doesNotThrow(() => new Function(js));
 });
 
-test('experience is a separate page and keeps the existing homepage untouched', () => {
+test('experience is a separate standalone page', () => {
   assert.match(html, /降本.*增效.*增利/);
   assert.match(html, /id="roiForm"/);
   assert.match(html, /id="bossAsk"/);
+  assert.doesNotMatch(html, /老板经营问诊器|真实经营问诊器|完整经营问诊/);
+  assert.doesNotMatch(html, /href="\/"/);
 });
 
 test('experience diagnosis calculates cost efficiency and profit independently', () => {
