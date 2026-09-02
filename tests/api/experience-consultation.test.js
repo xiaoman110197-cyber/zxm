@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import { handleExperienceConsultationRequest } from '../../api/experience-consultation.js';
 
 function mockRes(){
-  return { statusCode:200, body:null, status(code){ this.statusCode=code; return this; }, json(value){ this.body=value; return this; }, setHeader(){} };
+  return {
+    statusCode:200,
+    body:null,
+    headers:{},
+    status(code){ this.statusCode=code; return this; },
+    json(value){ this.body=value; return this; },
+    setHeader(name, value){ this.headers[name]=value; }
+  };
 }
 
 function validRaw(overrides={}){
@@ -56,6 +63,43 @@ test('consultation API removes invented price and availability when merchant fac
   assert.doesNotMatch(res.body.analysis.answer, /周六下午有位置/);
 });
 
+test('business hours do not count as proof that an appointment slot is available', async () => {
+  const res = mockRes();
+  await handleExperienceConsultationRequest({ method:'POST', body:{
+    industry:'massage',
+    channel:'web',
+    conversationText:'周六下午有位置吗？',
+    businessContext:'营业时间：周六 10:00-22:00'
+  } }, res, {
+    provider:{ name:'deepseek', model:'test-model', analyzeExperienceConsultation:async () => validRaw({
+      missingBusinessFacts:[],
+      answer:'周六下午有位置，可以直接过来。'
+    }) }
+  });
+  assert.equal(res.statusCode, 200);
+  assert.ok(res.body.analysis.missingBusinessFacts.includes('档期/可预约时间'));
+  assert.doesNotMatch(res.body.analysis.answer, /周六下午有位置/);
+  assert.match(res.body.analysis.answer, /确认|档期|时间/);
+});
+
+test('model price must be grounded in merchant facts even when a different price is supplied', async () => {
+  const res = mockRes();
+  await handleExperienceConsultationRequest({ method:'POST', body:{
+    industry:'massage',
+    channel:'web',
+    conversationText:'项目A多少钱？',
+    businessContext:'项目A价格398元'
+  } }, res, {
+    provider:{ name:'deepseek', model:'test-model', analyzeExperienceConsultation:async () => validRaw({
+      missingBusinessFacts:[],
+      answer:'项目A现在298元。'
+    }) }
+  });
+  assert.equal(res.statusCode, 200);
+  assert.doesNotMatch(res.body.analysis.answer, /298/);
+  assert.match(res.body.analysis.answer, /确认|价格|商家|资料/);
+});
+
 test('consultation API forces professional handoff even when model says risk none', async () => {
   const res = mockRes();
   await handleExperienceConsultationRequest({ method:'POST', body:{
@@ -94,6 +138,36 @@ test('consultation API returns safe 503 when DeepSeek is unavailable', async () 
   assert.equal(res.statusCode, 503);
   assert.match(res.body.error, /暂不可用/);
   assert.equal(JSON.stringify(res.body).includes('secret upstream detail'), false);
+});
+
+test('consultation API rate-limits repeated same-IP model calls before consuming more provider capacity', async () => {
+  let providerCalls = 0;
+  const provider = {
+    name:'deepseek',
+    model:'test-model',
+    analyzeExperienceConsultation:async () => {
+      providerCalls += 1;
+      return validRaw();
+    }
+  };
+  const req = {
+    method:'POST',
+    headers:{ 'x-vercel-forwarded-for':'203.0.113.77' },
+    body:{ industry:'massage', channel:'web', conversationText:'想了解一下项目', businessContext:'' }
+  };
+
+  for (let index=0; index<20; index += 1) {
+    const res = mockRes();
+    await handleExperienceConsultationRequest(req, res, { provider });
+    assert.equal(res.statusCode, 200);
+  }
+
+  const blocked = mockRes();
+  await handleExperienceConsultationRequest(req, blocked, { provider });
+  assert.equal(blocked.statusCode, 429);
+  assert.match(blocked.body.error, /频繁|稍后/);
+  assert.ok(Number(blocked.headers['Retry-After']) >= 1);
+  assert.equal(providerCalls, 20);
 });
 
 test('consultation API rejects unsupported method empty message unknown channel and oversized input', async () => {
