@@ -94,3 +94,47 @@ test('removes unsupported price or availability claims even when model says no f
   assert.doesNotMatch(result.answer, /298/);
   assert.match(result.answer, /确认|价格|档期|时间/);
 });
+
+test('does not use another service price merely because that amount exists somewhere in merchant facts', () => {
+  const result = sanitizeConsultationAnalysis({
+    customerNeed:'问项目A价格',
+    knownFacts:[],
+    missingCustomerInfo:[],
+    missingBusinessFacts:[],
+    lead:{ intent:'price', stage:'new_inquiry' },
+    risk:{ level:'none', reason:'' },
+    answer:'项目A现在是298元。',
+    nextTask:{ title:'确认价格', priority:'medium', dueHint:'within_24h', reason:'客户询价' },
+    appointmentCandidate:{ requested:false, date:null, time:null }
+  }, {
+    industry:'massage',
+    channel:'web',
+    conversationText:'项目A多少钱？',
+    businessContext:'项目A价格398元；项目B价格298元',
+    regenerateFrom:''
+  });
+  assert.doesNotMatch(result.answer, /项目A现在是298元/);
+  assert.match(result.answer, /确认|核对|398/);
+});
+
+test('does not use availability from a different requested day or time window', () => {
+  const result = sanitizeConsultationAnalysis({
+    customerNeed:'问周六下午档期',
+    knownFacts:[],
+    missingCustomerInfo:[],
+    missingBusinessFacts:[],
+    lead:{ intent:'booking', stage:'booking_intent' },
+    risk:{ level:'none', reason:'' },
+    answer:'周六下午有位置，可以预约。',
+    nextTask:{ title:'确认档期', priority:'medium', dueHint:'within_24h', reason:'客户想预约' },
+    appointmentCandidate:{ requested:true, date:null, time:null }
+  }, {
+    industry:'massage',
+    channel:'web',
+    conversationText:'周六下午有位置吗？',
+    businessContext:'周日上午有空，可预约10:00',
+    regenerateFrom:''
+  });
+  assert.match(result.missingBusinessFacts, /档期\/可预约时间/);
+  assert.doesNotMatch(result.answer, /周六下午有位置/);
+});
