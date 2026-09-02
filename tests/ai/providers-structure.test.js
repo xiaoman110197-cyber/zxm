@@ -82,3 +82,48 @@ test('V7 DeepSeek provider answers arbitrary boss questions from deterministic c
   assert.match(body.messages[0].content, /history|历史|前文/);
   assert.deepEqual(result.actions, ['先处理逾期任务']);
 });
+
+test('DeepSeek provider analyzes customer consultation into a complete reply without send authority or invented business facts', async () => {
+  let body;
+  const expected = {
+    customerNeed:'客户想了解价格并预约周六下午',
+    knownFacts:['客户第一次来'],
+    missingCustomerInfo:['具体项目'],
+    missingBusinessFacts:['价格/收费信息','档期/可预约时间'],
+    lead:{ intent:'booking', stage:'booking_intent' },
+    risk:{ level:'none', reason:'' },
+    answer:'可以先告诉我具体想咨询哪个项目，我确认价格和周六档期后再准确回复您。',
+    nextTask:{ title:'确认项目与时间', priority:'medium', dueHint:'within_24h', reason:'客户有预约意向' },
+    appointmentCandidate:{ requested:true, date:null, time:null }
+  };
+  const provider = createDeepSeekProvider({
+    apiKey:'deepseek-key',
+    fetchImpl:async (_url, init) => {
+      body = JSON.parse(init.body);
+      return new Response(JSON.stringify({ choices:[{ message:{ content:JSON.stringify(expected) } }] }), { status:200 });
+    }
+  });
+
+  assert.equal(typeof provider.analyzeExperienceConsultation, 'function');
+  const result = await provider.analyzeExperienceConsultation({
+    industry:'massage',
+    channel:'douyin',
+    conversationText:'第一次来，多少钱？周六下午能约吗？',
+    businessContext:'',
+    regenerateFrom:''
+  });
+
+  const systemPrompt = body.messages[0].content;
+  assert.deepEqual(body.thinking, { type:'disabled' });
+  assert.deepEqual(body.response_format, { type:'json_object' });
+  assert.match(systemPrompt, /完整.*回复|完整回复/);
+  assert.match(systemPrompt, /不能自行发送|没有发送权/);
+  assert.match(systemPrompt, /不得编造.*价格|价格.*不得编造/);
+  assert.match(systemPrompt, /档期|可预约/);
+  assert.match(systemPrompt, /专业人员|人工接手/);
+  assert.match(systemPrompt, /不可信业务输入/);
+  assert.match(systemPrompt, /customerNeed/);
+  assert.match(systemPrompt, /appointmentCandidate/);
+  assert.doesNotMatch(systemPrompt, /"sent"|bookingConfirmed/);
+  assert.deepEqual(result, expected);
+});
