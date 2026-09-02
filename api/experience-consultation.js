@@ -2,12 +2,23 @@ import { randomUUID } from 'node:crypto';
 import { createDeepSeekProvider } from '../src/ai/providers.js';
 import { normalizeConsultationInput, sanitizeConsultationAnalysis } from '../src/experience/consultation.js';
 import { CHANNEL_CAPABILITIES } from '../src/experience/connectors.js';
+import { checkBurstLimit, requestClientKey } from '../src/http/guard.js';
 
 function runtimeProvider(deps={}) {
   if (deps.provider?.analyzeExperienceConsultation) return deps.provider;
   const apiKey = String(process.env.DEEPSEEK_API_KEY || '').trim();
   if (!apiKey) return null;
   return createDeepSeekProvider({ apiKey, timeoutMs:12000, maxOutputTokens:1600 });
+}
+
+function applyBurstGuard(req, res, requestId, deps={}) {
+  if (deps.disableBurstGuard) return null;
+  const key = requestClientKey(req, 'experience-consultation');
+  if (!key) return null;
+  const result = checkBurstLimit(key, { limit:20, windowMs:10 * 60 * 1000 });
+  if (result.allowed) return null;
+  res.setHeader?.('Retry-After', String(result.retryAfterSeconds));
+  return res.status(429).json({ error:'请求较频繁，请稍后再试', requestId });
 }
 
 export async function handleExperienceConsultationRequest(req, res, deps={}) {
@@ -20,6 +31,9 @@ export async function handleExperienceConsultationRequest(req, res, deps={}) {
   } catch (error) {
     return res.status(400).json({ error:error?.message || '客户咨询输入无效', requestId });
   }
+
+  const limited = applyBurstGuard(req, res, requestId, deps);
+  if (limited) return limited;
 
   const provider = runtimeProvider(deps);
   if (!provider) return res.status(503).json({ error:'AI咨询分析暂不可用，请稍后重试。', requestId });

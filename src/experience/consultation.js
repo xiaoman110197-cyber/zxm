@@ -14,7 +14,8 @@ const MAX_LIST_ITEMS = 12;
 const PRICE_QUESTION = /(多少钱|价格|收费|费用|价位|优惠)/i;
 const PRICE_EVIDENCE = /(?:¥|￥)\s*\d|\d+(?:\.\d+)?\s*(?:元|块)|(?:价格|收费|费用|价位|优惠)\s*[:：]?\s*\d/i;
 const AVAILABILITY_QUESTION = /(有位置|有空|档期|能约|预约.*时间|周[一二三四五六日天]|几点)/i;
-const AVAILABILITY_EVIDENCE = /(可预约|有空|有档期|满约|已满|\d{1,2}[:：]\d{2}|周[一二三四五六日天])/i;
+const AVAILABILITY_EVIDENCE = /(可预约|可以预约|有空|有档期|有位置|有名额|可安排|可以安排|满约|已满|无空位|没位置|没有位置|不可预约|不能预约)/i;
+const AVAILABILITY_CLAIM = /(可预约|可以预约|有空|有档期|有位置|有名额|可安排|可以安排|满约|已满|无空位|没位置|没有位置|不可预约|不能预约)/i;
 
 const HIGH_RISK_INDUSTRIES = new Set([
   'clinic',
@@ -60,6 +61,37 @@ function boundedInput(value, { name, max, required = false }) {
   if (required && !text) throw new Error(`${name}不能为空`);
   if (text.length > max) throw new Error(`${name}过长，请缩短或分段后再试`);
   return text;
+}
+
+function normalizeMoneyAmount(value) {
+  const number = Number(String(value || '').replace(/,/g, ''));
+  return Number.isFinite(number) ? String(number) : null;
+}
+
+function moneyClaims(text = '') {
+  const source = String(text || '');
+  const patterns = [
+    /(?:¥|￥)\s*(\d[\d,]*(?:\.\d+)?)/g,
+    /(\d[\d,]*(?:\.\d+)?)\s*(?:元|块)/g,
+    /(?:价格|收费|费用|价位|优惠)\s*[:：]?\s*(\d[\d,]*(?:\.\d+)?)/g
+  ];
+  const values = new Set();
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const normalized = normalizeMoneyAmount(match[1]);
+      if (normalized !== null) values.add(normalized);
+    }
+  }
+  return values;
+}
+
+function hasUnsupportedBusinessClaim(answer, businessContext) {
+  const answerMoney = moneyClaims(answer);
+  const contextMoney = moneyClaims(businessContext);
+  for (const amount of answerMoney) {
+    if (!contextMoney.has(amount)) return true;
+  }
+  return AVAILABILITY_CLAIM.test(answer) && !AVAILABILITY_EVIDENCE.test(String(businessContext || ''));
 }
 
 export function normalizeConsultationInput(body = {}) {
@@ -113,6 +145,10 @@ function safeMissingBusinessReply(missing) {
   return `可以先帮您确认。当前还缺少${gaps || '必要的商家信息'}，确认后再给您准确回复。`;
 }
 
+function safeUnsupportedBusinessClaimReply() {
+  return '我先按商家已确认的资料帮您核对价格和预约情况。当前这条回复里有价格或档期说法无法从已提供资料中确认，核对准确后再回复您。';
+}
+
 function safeExecutionReply() {
   return '可以先帮您继续处理。当前还没有完成实际预约、付款或外部发送，请先确认具体需求和必要信息，再由工作人员完成后续操作。';
 }
@@ -139,6 +175,8 @@ export function sanitizeConsultationAnalysis(raw, input = {}) {
     answer = '这个问题涉及专业判断，我可以先帮您整理需求和必要信息，并安排专业人员确认后再回复您。';
   } else if (deterministicMissing.length) {
     answer = safeMissingBusinessReply(deterministicMissing);
+  } else if (hasUnsupportedBusinessClaim(answer, input?.businessContext)) {
+    answer = safeUnsupportedBusinessClaimReply();
   } else if (!answer || EXECUTION_CLAIM_PATTERN.test(answer)) {
     answer = safeExecutionReply();
   }
