@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleExperienceSummaryRequest } from '../../api/experience-summary.js';
+import * as experienceApi from '../../api/experience-summary.js';
+
+const { handleExperienceSummaryRequest } = experienceApi;
 
 function mockRes(){
   return { statusCode:200, body:null, status(code){ this.statusCode=code; return this; }, json(value){ this.body=value; return this; }, setHeader(){} };
@@ -80,4 +82,42 @@ test('confirmed AI mappings are validated and then used by deterministic calcula
   assert.equal(res.body.summary.metrics.revenue, 688);
   assert.equal(res.body.summary.metrics.completed, 1);
   assert.equal(JSON.stringify(res.body).includes('张三'), false);
+});
+
+test('V7 business question API uses aggregate context, keeps evidence deterministic, and blocks unsupported profit claims', async () => {
+  assert.equal(typeof experienceApi.handleExperienceQuestionRequest, 'function');
+  const res = mockRes();
+  let receivedInput = null;
+  await experienceApi.handleExperienceQuestionRequest({ method:'POST', body:{
+    question:'今天利润怎么样？为什么？',
+    summary:{
+      ok:true, usedSheet:'订单明细', period:'2026-09-02', fieldCoverage:67,
+      missing:['成本/毛利率'],
+      metrics:{ records:20, appointments:12, arrivals:8, completed:6, noShows:2, revenue:9800, overdue:3 },
+      channels:[{ channel:'企微', records:9, revenue:4300 }],
+      overdueOwners:[{ owner:'小王', overdue:2 }]
+    },
+    source:{ fileName:'经营.csv' },
+    history:[{ role:'owner', text:'今天怎样？' }, { role:'assistant', text:'营业额已确认。' }]
+  } }, res, {
+    provider:{ answerExperienceQuestion:async (input) => {
+      receivedInput = input;
+      return {
+        overview:'营业额表现尚可，因此利润约为9800元。',
+        cost:'暂无更多成本信息。',
+        efficiency:'有3项逾期。',
+        profit:'利润约9800元。',
+        actions:['先处理逾期'],
+        limits:[]
+      };
+    } }
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(receivedInput.context.facts.revenue, 9800);
+  assert.equal(receivedInput.context.availability.profit, false);
+  assert.match(res.body.answer.profit, /无法判断利润|不能判断利润/);
+  assert.doesNotMatch(res.body.answer.profit, /9800/);
+  assert.ok(res.body.evidence.some((item) => item.includes('2026-09-02')));
+  assert.ok(res.body.evidence.some((item) => item.includes('20')));
+  assert.equal(JSON.stringify(receivedInput).includes('客户明细'), false);
 });
