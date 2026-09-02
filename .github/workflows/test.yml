@@ -25,7 +25,7 @@ jobs:
       - name: Test protected Preview and live DeepSeek
         env:
           OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
-          PREVIEW_URL: https://zhenduan-v03-preview-git-codex-add-experience-v6-zxzxzxmzxm.vercel.app
+          PREVIEW_URL: https://zhenduan-git-codex-add-experience-v6-zxzxzxmzxm.vercel.app
         run: |
           node --input-type=module <<'NODE'
           const base = process.env.PREVIEW_URL.replace(/\/$/, '');
