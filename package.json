@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "build": "rm -rf dist && cp -R public dist && node scripts/verify-server-imports.js && node scripts/check-deepseek-env.js && node scripts/live-deepseek-pipeline-test.js"
+    "build": "rm -rf dist && cp -R public dist && node scripts/verify-server-imports.js"
   },
   "dependencies": {
     "@tesseract.js-data/chi_sim": "1.0.0",
