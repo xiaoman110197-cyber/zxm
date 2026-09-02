@@ -85,13 +85,132 @@ function moneyClaims(text = '') {
   return values;
 }
 
-function hasUnsupportedBusinessClaim(answer, businessContext) {
-  const answerMoney = moneyClaims(answer);
-  const contextMoney = moneyClaims(businessContext);
-  for (const amount of answerMoney) {
-    if (!contextMoney.has(amount)) return true;
+function priceSegments(text = '') {
+  return String(text || '')
+    .split(/[；;。！？!?\n，,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function contextStatements(text = '') {
+  return String(text || '')
+    .split(/[；;。！？!?\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function requestedPriceSubject(question = '') {
+  const source = String(question || '').replace(/\s+/g, ' ').trim();
+  const match = source.match(PRICE_QUESTION);
+  if (!match || typeof match.index !== 'number') return '';
+  const before = source.slice(0, match.index);
+  let subject = before.split(/[，,。！？!?；;：:\n]/).pop()?.trim() || '';
+  subject = subject
+    .replace(/^(?:请问|请教一下|想问(?:一下)?|我想问(?:一下)?|咨询(?:一下)?|麻烦问下|麻烦问一下|第一次来|首次来)\s*/i, '')
+    .replace(/^(?:这个|那个)\s*/i, '')
+    .replace(/的$/u, '')
+    .trim();
+  if (!subject || /^(?:这个|那个|项目|服务|费用|价格)$/u.test(subject)) return '';
+  return subject.slice(-30);
+}
+
+function relevantPriceMoney(question = '', businessContext = '') {
+  const subject = requestedPriceSubject(question);
+  if (!subject) return moneyClaims(businessContext);
+  const normalizedSubject = subject.replace(/\s+/g, '');
+  const values = new Set();
+  for (const segment of priceSegments(businessContext)) {
+    if (!segment.replace(/\s+/g, '').includes(normalizedSubject)) continue;
+    for (const amount of moneyClaims(segment)) values.add(amount);
   }
-  return AVAILABILITY_CLAIM.test(answer) && !AVAILABILITY_EVIDENCE.test(String(businessContext || ''));
+  return values;
+}
+
+function hasRelevantPriceEvidence(question = '', businessContext = '') {
+  if (!PRICE_QUESTION.test(String(question || ''))) return true;
+  const subject = requestedPriceSubject(question);
+  if (!subject) return PRICE_EVIDENCE.test(String(businessContext || ''));
+  return relevantPriceMoney(question, businessContext).size > 0;
+}
+
+function normalizeWeekday(value = '') {
+  const weekday = String(value || '');
+  return weekday === '周天' ? '周日' : weekday;
+}
+
+function clockMinutes(text = '') {
+  const source = String(text || '');
+  const values = new Set();
+  for (const match of source.matchAll(/(?:^|\D)([01]?\d|2[0-3])[:：]([0-5]\d)(?!\d)/g)) {
+    values.add(Number(match[1]) * 60 + Number(match[2]));
+  }
+  for (const match of source.matchAll(/(?:^|\D)([01]?\d|2[0-3])点(?:(半)|([0-5]?\d)分?)?/g)) {
+    const minutes = match[2] ? 30 : Number(match[3] || 0);
+    values.add(Number(match[1]) * 60 + minutes);
+  }
+  return values;
+}
+
+function requestedAvailabilityScope(question = '') {
+  const source = String(question || '');
+  const weekdayMatch = source.match(/周[一二三四五六日天]/);
+  const daypartMatch = source.match(/(早上|上午|中午|下午|晚上|夜间)/);
+  const times = [...clockMinutes(source)];
+  return {
+    weekday:weekdayMatch ? normalizeWeekday(weekdayMatch[0]) : '',
+    daypart:daypartMatch?.[1] || '',
+    exactTime:times.length ? times[0] : null
+  };
+}
+
+function minuteMatchesDaypart(minute, daypart) {
+  if (!Number.isFinite(minute)) return false;
+  const hour = minute / 60;
+  if (daypart === '早上') return hour >= 5 && hour < 11;
+  if (daypart === '上午') return hour >= 5 && hour < 12;
+  if (daypart === '中午') return hour >= 11 && hour < 14;
+  if (daypart === '下午') return hour >= 12 && hour < 18;
+  if (daypart === '晚上' || daypart === '夜间') return hour >= 18 || hour < 5;
+  return true;
+}
+
+function statementMatchesAvailabilityScope(statement, scope) {
+  const source = String(statement || '');
+  if (!AVAILABILITY_EVIDENCE.test(source)) return false;
+
+  if (scope.weekday) {
+    const weekdays = [...source.matchAll(/周[一二三四五六日天]/g)].map((match) => normalizeWeekday(match[0]));
+    if (!weekdays.includes(scope.weekday)) return false;
+  }
+
+  const times = [...clockMinutes(source)];
+  if (scope.exactTime !== null && !times.includes(scope.exactTime)) return false;
+
+  if (scope.daypart) {
+    const literalMatch = source.includes(scope.daypart);
+    const clockMatch = times.some((minute) => minuteMatchesDaypart(minute, scope.daypart));
+    if (!literalMatch && !clockMatch) return false;
+  }
+
+  return true;
+}
+
+function hasRelevantAvailabilityEvidence(question = '', businessContext = '') {
+  if (!AVAILABILITY_QUESTION.test(String(question || ''))) return true;
+  const scope = requestedAvailabilityScope(question);
+  const hasScope = Boolean(scope.weekday || scope.daypart || scope.exactTime !== null);
+  if (!hasScope) return AVAILABILITY_EVIDENCE.test(String(businessContext || ''));
+  return contextStatements(businessContext).some((statement) => statementMatchesAvailabilityScope(statement, scope));
+}
+
+function hasUnsupportedBusinessClaim(answer, businessContext, conversationText = '') {
+  const answerMoney = moneyClaims(answer);
+  const supportedMoney = relevantPriceMoney(conversationText, businessContext);
+  for (const amount of answerMoney) {
+    if (!supportedMoney.has(amount)) return true;
+  }
+  return AVAILABILITY_CLAIM.test(answer)
+    && !hasRelevantAvailabilityEvidence(conversationText, businessContext);
 }
 
 export function normalizeConsultationInput(body = {}) {
@@ -120,8 +239,8 @@ export function detectRequiredBusinessFacts({ conversationText = '', businessCon
   const question = String(conversationText || '');
   const context = String(businessContext || '');
   const missing = [];
-  if (PRICE_QUESTION.test(question) && !PRICE_EVIDENCE.test(context)) missing.push('价格/收费信息');
-  if (AVAILABILITY_QUESTION.test(question) && !AVAILABILITY_EVIDENCE.test(context)) missing.push('档期/可预约时间');
+  if (PRICE_QUESTION.test(question) && !hasRelevantPriceEvidence(question, context)) missing.push('价格/收费信息');
+  if (AVAILABILITY_QUESTION.test(question) && !hasRelevantAvailabilityEvidence(question, context)) missing.push('档期/可预约时间');
   return missing;
 }
 
@@ -175,7 +294,7 @@ export function sanitizeConsultationAnalysis(raw, input = {}) {
     answer = '这个问题涉及专业判断，我可以先帮您整理需求和必要信息，并安排专业人员确认后再回复您。';
   } else if (deterministicMissing.length) {
     answer = safeMissingBusinessReply(deterministicMissing);
-  } else if (hasUnsupportedBusinessClaim(answer, input?.businessContext)) {
+  } else if (hasUnsupportedBusinessClaim(answer, input?.businessContext, input?.conversationText)) {
     answer = safeUnsupportedBusinessClaimReply();
   } else if (!answer || EXECUTION_CLAIM_PATTERN.test(answer)) {
     answer = safeExecutionReply();
