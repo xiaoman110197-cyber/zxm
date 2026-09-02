@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>AI 商家降本增效增利体验</title>
+  <link rel="stylesheet" href="/experience/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="/experience/">AI 商家经营体验</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap hero-grid">
+        <div>
+          <span class="eyebrow">独立体验页 · 支持演示数据与真实 Excel/CSV</span>
+          <h1>先看哪里能<strong>降本</strong>、哪里能<strong>增效</strong>、哪里还有<strong>增利</strong>机会。</h1>
+          <p>先用已知业务情况做流程诊断，也可以上传脱敏 Excel/CSV，让“今天怎样”基于真实汇总结果回答。正式合作后再按行业和现有系统组合模块。</p>
+          <div class="actions">
+            <a class="button primary" href="#roi">开始经营诊断</a>
+            <a class="button secondary" href="#data">上传经营表格</a>
+          </div>
+        </div>
+        <aside class="demo-card">
+          <span>虚构按摩门店 · 未上传数据时的演示摘要</span>
+          <div class="metrics">
+            <div><small>咨询</small><b>32</b></div>
+            <div><small>预约</small><b>24</b></div>
+            <div><small>到店</small><b>16</b></div>
+            <div><small>营业额</small><b>¥11,860</b></div>
+          </div>
+          <p>上传 Excel/CSV 后，老板问答会优先使用你的真实聚合结果。</p>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section" id="roi">
+      <div class="wrap">
+        <span class="eyebrow">体验 01</span>
+        <h2>3 分钟降本、增效、增利诊断</h2>
+        <p class="lead">只回答你知道的。不清楚就留空；数据不足时只给方向，不为了显示漂亮数字硬算。</p>
+        <div class="two-col">
+          <form class="panel" id="roiForm">
+            <div class="form-grid">
+              <label>行业
+                <select id="diagIndustry">
+                  <option value="massage">按摩 / SPA / 足疗</option>
+                  <option value="clinic">中医 / 口腔 / 医美</option>
+                  <option value="legal">律所 / 咨询 / 保险</option>
+                  <option value="home">装修 / 家居 / 汽车服务</option>
+                  <option value="other">其他本地服务</option>
+                </select>
+              </label>
+              <label>每天咨询 / 预约量
+                <select id="diagVolume"><option value="">不清楚</option><option value="10">约 10 条</option><option value="25">约 25 条</option><option value="50">约 50 条</option><option value="100">约 100 条</option><option value="150">150 条以上</option></select>
+              </label>
+              <fieldset class="full">
+                <legend>一条新客户进来后，员工通常要做哪些事？</legend>
+                <div class="check-grid" id="diagTasks">
+                  <label><input type="checkbox" value="reply">回复常见问题</label>
+                  <label><input type="checkbox" value="collect">询问并整理客户资料</label>
+                  <label><input type="checkbox" value="copy">复制到 Excel / 系统</label>
+                  <label><input type="checkbox" value="book">安排预约 / 分配人员</label>
+                  <label><input type="checkbox" value="remind">提醒到店 / 到诊</label>
+                  <label><input type="checkbox" value="follow">后续回访 / 跟进</label>
+                </div>
+              </fieldset>
+              <label>一条业务这些重复步骤大约多久
+                <select id="diagAvgTime"><option value="">不清楚</option><option value="3">3 分钟以内</option><option value="5">约 3–5 分钟</option><option value="8">约 5–10 分钟</option><option value="12">10 分钟以上</option></select>
+              </label>
+              <label>同一份信息重复登记几次
+                <select id="diagDuplicate"><option value="">不清楚</option><option value="0">基本不重复</option><option value="1">再登记 1 次</option><option value="2">再登记 2 次</option><option value="3">3 次以上</option></select>
+              </label>
+              <label>最容易漏哪一步
+                <select id="diagLeak"><option value="">不清楚</option><option value="none">基本不漏</option><option value="reply">漏回复</option><option value="booking">漏预约 / 撞档</option><option value="follow">漏回访 / 跟进</option><option value="renew">漏复诊 / 续费 / 续期</option><option value="quote">报价后没人跟</option><option value="conflict">排班 / 资源冲突</option></select>
+              </label>
+              <label>老板/店长每天整理数据多久
+                <select id="diagReport"><option value="">不清楚</option><option value="0">基本不整理</option><option value="0.25">15 分钟以内</option><option value="0.5">15–30 分钟</option><option value="1">30–60 分钟</option><option value="1.5">1 小时以上</option></select>
+              </label>
+              <label>涉及这些重复工作的有多少人
+                <select id="diagStaff"><option value="">不清楚</option><option value="1">1 人</option><option value="2">2–3 人</option><option value="5">4–6 人</option><option value="8">7 人以上</option></select>
+              </label>
+              <label>这类员工大概月薪
+                <select id="diagSalary"><option value="">不清楚</option><option value="4000">约 ¥4,000</option><option value="6000">约 ¥6,000</option><option value="8000">约 ¥8,000</option><option value="12000">约 ¥12,000</option><option value="18000">¥15,000 以上</option></select>
+              </label>
+              <label>平均客单 / 单笔项目价值（可选）
+                <select id="diagTicket"><option value="">不清楚</option><option value="300">约 ¥300</option><option value="1000">约 ¥1,000</option><option value="5000">约 ¥5,000</option><option value="20000">约 ¥20,000</option><option value="50000">约 ¥50,000</option></select>
+              </label>
+              <label>毛利率（可选）
+                <select id="diagMargin"><option value="">不清楚</option><option value="20">约 20%</option><option value="40">约 40%</option><option value="60">约 60%</option><option value="80">约 80%</option></select>
+              </label>
+              <label>每月明确因漏回复/爽约/漏跟进流失多少客户（可选）
+                <select id="diagLostCustomers"><option value="">不清楚</option><option value="0">基本没有</option><option value="1">约 1 人</option><option value="3">约 3 人</option><option value="5">约 5 人</option><option value="10">约 10 人</option><option value="20">20 人以上</option></select>
+              </label>
+              <label class="full">最想先解决什么
+                <select id="diagGoal"><option value="auto">不知道，帮我判断</option><option value="time">员工重复工作太多</option><option value="miss">客户 / 预约 / 跟进容易漏</option><option value="data">老板看数据太费劲</option><option value="capacity">同样的人手想处理更多业务</option></select>
+              </label>
+            </div>
+            <button class="button primary wide" type="submit">生成诊断结果</button>
+          </form>
+
+          <div class="panel result-panel">
+            <div class="result-head"><h3>初步诊断</h3><span id="diagConfidence">低置信度</span></div>
+            <p id="diagConfidenceNote" class="muted">目前信息较少，先给方向性建议。</p>
+            <div class="value-grid">
+              <article><span>降本机会</span><b id="diagHours">先回答左侧问题</b><p id="diagMoney">人工金额暂不估算</p></article>
+              <article><span>增效机会</span><b id="diagEfficiencyMain">暂不估算效率提升</b><p id="diagEfficiencyNote">需要业务量、耗时和实际步骤。</p></article>
+              <article><span>增利机会</span><b id="diagProfitMain">暂不估算利润金额</b><p id="diagProfitNote">先识别漏单、爽约、复购和空档机会。</p></article>
+            </div>
+            <div class="info-box"><b>最值得关注</b><p id="diagLoss">完成诊断后显示。</p></div>
+            <div class="info-box"><b>建议第一阶段</b><p id="diagPilot">完成诊断后显示。</p></div>
+            <div class="info-box warning"><b>还缺哪些数据</b><p id="diagMissing">不知道没有关系；系统会告诉你下一步需要补什么。</p></div>
+            <p class="fine-print" id="diagBasis">结果属于流程诊断与区间测算，正式结果需要真实试点校准。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="moduleCenter">
+      <div class="wrap">
+        <span class="eyebrow">模块中心</span>
+        <h2>先开必要模块，其他能力保留给老板选择。</h2>
+        <p class="lead">✅ 已启用 · ◐ 建议开启 · ○ 可选 · 🔒 待接数据 · — 当前不适用</p>
+        <div class="module-opportunity" id="moduleOpportunity">完成体验01后，这里会显示当前最值得继续开启的降本、增效、增利模块。</div>
+        <div class="module-grid" id="moduleCards"></div>
+        <div class="deployment-note"><b>正式部署需要：</b>不同模块会标注 🧠 大模型、📊 经营数据/数据源、🗄️ 数据库、⚙️ 规则/计算、💬 消息入口等依赖。这里是体验和能力规划，不代表已经接通。</div>
+      </div>
+    </section>
+
+    <section class="section" id="data">
+      <div class="wrap">
+        <span class="eyebrow">真实数据体验</span>
+        <h2>上传 Excel / CSV，让老板问答基于你的真实汇总。</h2>
+        <p class="lead">支持 .xlsx / .xls / .csv，最大 3 MB。服务端只返回聚合指标、字段识别和缺失项，不把客户明细返回到这个体验页。</p>
+        <div class="two-col">
+          <div class="panel">
+            <label>经营表格
+              <input id="businessFile" type="file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv">
+            </label>
+            <button class="button primary wide" id="analyzeBusinessFile" type="button">分析这份表格</button>
+            <button class="button secondary wide" id="clearBusinessFile" type="button">清除并恢复演示数据</button>
+            <p class="fine-print" id="businessFileStatus">尚未上传。老板问答当前使用虚构演示数据。</p>
+            <div class="info-box"><b>识别范围</b><p id="businessUsedSheet">等待上传。</p></div>
+            <div class="info-box"><b>数据完整度</b><p id="businessCompleteness">等待上传。</p></div>
+            <div class="info-box warning"><b>缺少的数据</b><p id="businessMissing">等待上传。</p></div>
+            <div class="info-box"><b>分析提醒</b><p id="businessWarnings">等待上传。</p></div>
+          </div>
+          <div class="panel result-panel">
+            <h3>程序计算出的经营摘要</h3>
+            <div class="value-grid">
+              <article><span>业务记录</span><b id="realRecords">—</b><p>按文件最近日期或整份主明细表</p></article>
+              <article><span>预约/下一阶段</span><b id="realAppointments">—</b><p>没有状态列时显示无法计算</p></article>
+              <article><span>到店/到诊</span><b id="realArrivals">—</b><p>基于状态字段</p></article>
+              <article><span>完成/成交</span><b id="realCompleted">—</b><p>基于状态字段</p></article>
+              <article><span>营业额</span><b id="realRevenue">—</b><p>基于金额字段</p></article>
+              <article><span>逾期任务</span><b id="realOverdue">—</b><p>需要截止时间字段</p></article>
+            </div>
+            <div class="deployment-note"><b>当前实现：</b>⚙️ 程序读取 + 确定性计算；普通表头直接识别，命名模糊时可主动调用 🧠 大模型给字段映射建议，必须人工确认后才重新计算。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section alt" id="boss">
+      <div class="wrap">
+        <span class="eyebrow">体验 03 · V7</span>
+        <h2>老板直接问：“今天怎样？”</h2>
+        <p class="lead">未上传表格时使用虚构演示数据；上传后可以任意自然语言追问。数字和比例由程序计算，大模型只负责理解问题和把结果说成人话；数据缺失时明确告诉你还缺什么。</p>
+        <div class="two-col">
+          <div class="panel">
+            <div class="info-box"><b>当前数据模式</b><p id="bossDataMode">演示数据</p></div>
+            <label>演示行业（仅演示模式生效）
+              <select id="bossIndustry"><option value="massage">按摩 / SPA</option><option value="clinic">中医 / 口腔 / 医美</option><option value="legal">律所 / 咨询 / 保险</option><option value="home">装修 / 汽车服务</option></select>
+            </label>
+            <div class="quick-actions">
+              <button type="button" data-question="今天怎样？">今天怎样？</button>
+              <button type="button" data-question="今天有什么问题？">今天有什么问题？</button>
+              <button type="button" data-question="哪个渠道最好？">哪个渠道最好？</button>
+              <button type="button" data-question="谁还有客户没跟进？">谁还有客户没跟进？</button>
+            </div>
+            <label>老板的问题
+              <input id="bossQuestion" value="今天怎样？" placeholder="例如：为什么营业额还可以，但你不判断利润好？">
+            </label>
+            <button class="button primary wide" id="bossAsk" type="button">查询经营情况</button>
+          </div>
+          <div class="panel answer-panel">
+            <h3>老板收到的回答</h3>
+            <div id="bossAnswer" class="answer">点击“查询经营情况”后显示。</div>
+            <p id="bossSource" class="fine-print">数据来源：虚构演示数据。</p>
+            <div class="deployment-note"><b>当前真实数据模式已接：</b>📊 Excel/CSV + ⚙️ 指标计算 + 🧠 大模型自然语言问答。自动抓 POS/CRM/预约系统和在 WorkBuddy / 企业微信 / 飞书 / 钉钉里直接问，属于后续连接器部署。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="consultation">
+      <div class="wrap">
+        <span class="eyebrow">体验 04</span>
+        <h2>AI 客户咨询助手</h2>
+        <p class="lead">把单条客户消息或完整聊天记录交给 AI。DeepSeek 先整理需求并写出一条完整回复，操作人员拥有最终发送决定权：可以修改、重新生成、暂不回复或确认采用。体验版不会向外部渠道发送消息。</p>
+        <div class="two-col">
+          <div class="panel">
+            <label>行业
+              <select id="consultationIndustry">
+                <option value="massage">按摩 / SPA / 足疗</option>
+                <option value="clinic">中医 / 口腔 / 医美</option>
+                <option value="legal">律所 / 咨询 / 保险</option>
+                <option value="home">装修 / 家居 / 汽车服务</option>
+                <option value="other">其他本地服务</option>
+              </select>
+            </label>
+            <label>这段聊天来自哪里
+              <select id="consultationChannel">
+                <option value="web">Web · 当前体验入口</option>
+                <option value="wecom">企业微信 · 待接接口</option>
+                <option value="feishu">飞书 · 待接接口</option>
+                <option value="dingtalk">钉钉 · 待接接口</option>
+                <option value="workbuddy">WorkBuddy · 待接接口</option>
+                <option value="douyin">抖音 · 待接接口</option>
+              </select>
+            </label>
+            <p class="fine-print" id="consultationChannelStatus">Web 当前只用于体验输入；任何渠道都不会在本页自动外发。</p>
+            <label>客户消息 / 完整聊天记录
+              <textarea id="consultationConversation" rows="9" placeholder="例如：第一次来，想问下你们这个项目多少钱？周六下午有时间吗？"></textarea>
+            </label>
+            <label>本次可确认的商家事实（可选）
+              <textarea id="consultationBusinessContext" rows="5" placeholder="例如：项目A 398元；周六14:00可预约。没有可靠资料就留空，AI不会自己猜价格或档期。"></textarea>
+            </label>
+            <button class="button primary wide" id="consultationAnalyze" type="button">AI 分析客户咨询</button>
+            <p class="fine-print" id="consultationStatus">尚未分析。</p>
+          </div>
+
+          <div class="panel result-panel">
+            <h3>AI 整理后的客户咨询</h3>
+            <div class="info-box"><b>客户主要想要什么</b><p id="consultationNeed">等待分析。</p></div>
+            <div class="info-box"><b>已经确认的信息</b><div id="consultationKnown">等待分析。</div></div>
+            <div class="info-box"><b>还缺哪些客户信息</b><div id="consultationMissingCustomer">等待分析。</div></div>
+            <div class="info-box warning"><b>还缺哪些商家事实</b><div id="consultationMissingBusiness">等待分析。</div></div>
+            <div class="info-box"><b>客户阶段</b><p id="consultationStage">等待分析。</p></div>
+            <div class="info-box warning consultation-risk" id="consultationRisk" hidden><b>需要人工 / 专业人员接手</b><p>等待分析。</p></div>
+            <label>完整回复答案（可直接修改）
+              <textarea id="consultationReply" class="consultation-reply" placeholder="AI 完整回复会显示在这里。"></textarea>
+            </label>
+            <div class="info-box"><b>下一步跟进任务</b><p id="consultationTask">等待分析。</p></div>
+            <div class="consultation-actions">
+              <button class="button secondary" id="consultationEdit" type="button" disabled>编辑答案</button>
+              <button class="button secondary" id="consultationRegenerate" type="button" disabled>重新生成</button>
+              <button class="button secondary" id="consultationHold" type="button" disabled>暂不回复</button>
+              <button class="button primary" id="consultationApprove" type="button" disabled>确认采用</button>
+            </div>
+            <p id="consultationDecision" class="fine-print">AI 只生成答案，当前没有执行任何发送动作。</p>
+            <p id="consultationTrace" class="fine-print">调用信息将在分析后显示。</p>
+            <div class="deployment-note"><b>当前实现：</b>🧠 DeepSeek 负责理解语言与生成完整回复；⚙️ 程序负责结构校验、缺失事实和风险兜底；💬 渠道 Adapter 接口已保留，企业微信 / 飞书 / 钉钉 / WorkBuddy / 抖音当前均为待接接口；👤 操作人员拥有最终发送决定权。</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/experience/trace.js"></script>
+  <script type="module" src="/experience/app.js"></script>
+  <script type="module" src="/experience/v7.js"></script>
+  <script type="module" src="/experience/consultation.js"></script>
+</body>
+</html>
