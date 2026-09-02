@@ -135,6 +135,6 @@ test('does not use availability from a different requested day or time window', 
     businessContext:'周日上午有空，可预约10:00',
     regenerateFrom:''
   });
-  assert.match(result.missingBusinessFacts, /档期\/可预约时间/);
+  assert.ok(result.missingBusinessFacts.includes('档期/可预约时间'));
   assert.doesNotMatch(result.answer, /周六下午有位置/);
 });
