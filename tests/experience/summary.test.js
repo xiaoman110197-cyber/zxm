@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { summarizeWorkbook } from '../../src/experience/summary.js';
+import * as experienceSummary from '../../src/experience/summary.js';
+
+const { summarizeWorkbook } = experienceSummary;
 
 test('summarizes the latest business day from common Chinese headers', () => {
   const workbook = { sheets:[{ name:'预约明细', headers:['日期','客户','预约状态','金额','渠道','负责人','下次跟进','任务状态'], rows:[
@@ -64,4 +66,25 @@ test('ambiguous headers only affect calculations after the owner confirms mappin
   assert.equal(after.metrics.revenue, 688);
   assert.equal(after.metrics.overdue, 1);
   assert.equal(after.fields.amount, '到账口径');
+});
+
+test('V7 question context exposes only deterministic aggregates and never treats revenue as profit', () => {
+  assert.equal(typeof experienceSummary.buildBusinessQuestionContext, 'function');
+  const context = experienceSummary.buildBusinessQuestionContext({
+    ok:true,
+    usedSheet:'预约明细',
+    period:'2026-09-02',
+    fieldCoverage:78,
+    missing:['成本/毛利率'],
+    metrics:{ records:24, appointments:18, arrivals:12, completed:9, noShows:3, revenue:11860, overdue:5 },
+    channels:[{ channel:'企微', records:10, revenue:5200 }],
+    overdueOwners:[{ owner:'小王', overdue:3 }]
+  }, { source:{ fileName:'经营.csv' } });
+  assert.equal(context.available, true);
+  assert.equal(context.facts.revenue, 11860);
+  assert.equal(context.derived.arrivalRate, 66.7);
+  assert.equal(context.derived.completionRate, 50);
+  assert.equal(context.availability.profit, false);
+  assert.ok(context.unavailable.includes('利润/毛利'));
+  assert.equal(JSON.stringify(context).includes('客户明细'), false);
 });
