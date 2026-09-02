@@ -79,6 +79,26 @@ test('AI field mapping visibly shows provider model status request id and return
   assert.match(trace, /不是 DeepSeek 官方 request ID/);
 });
 
+test('AI mapping suggestions explain column meaning in owner language without percentage-as-accuracy copy', () => {
+  assert.match(trace, /humanConfidenceLabel/);
+  assert.match(trace, /高置信度/);
+  assert.match(trace, /中置信度/);
+  assert.match(trace, /低置信度/);
+  assert.match(trace, /作为.*使用/);
+  assert.match(trace, /确认的是列含义/);
+  assert.doesNotMatch(trace, /Math\.round\(\(item\.confidence[^\n]*100/);
+});
+
+test('real business summary numbers carry metric-specific units instead of bare numbers', () => {
+  assert.match(trace, /realMetricUnits/);
+  assert.match(trace, /realRecords[^\n]*条/);
+  assert.match(trace, /realAppointments[^\n]*条/);
+  assert.match(trace, /realArrivals[^\n]*条/);
+  assert.match(trace, /realCompleted[^\n]*笔/);
+  assert.match(trace, /realOverdue[^\n]*项/);
+  assert.match(trace, /applyRealMetricUnits/);
+});
+
 test('V7 real-data boss query uses AI for arbitrary questions and keeps follow-up history', () => {
   assert.match(browserJs, /async function askBossQuestion/);
   assert.match(browserJs, /\/api\/experience-question/);
