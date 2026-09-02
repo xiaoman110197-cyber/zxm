@@ -196,10 +196,74 @@
         </div>
       </div>
     </section>
+
+    <section class="section" id="consultation">
+      <div class="wrap">
+        <span class="eyebrow">体验 04</span>
+        <h2>AI 客户咨询助手</h2>
+        <p class="lead">把单条客户消息或完整聊天记录交给 AI。DeepSeek 先整理需求并写出一条完整回复，操作人员拥有最终发送决定权：可以修改、重新生成、暂不回复或确认采用。体验版不会向外部渠道发送消息。</p>
+        <div class="two-col">
+          <div class="panel">
+            <label>行业
+              <select id="consultationIndustry">
+                <option value="massage">按摩 / SPA / 足疗</option>
+                <option value="clinic">中医 / 口腔 / 医美</option>
+                <option value="legal">律所 / 咨询 / 保险</option>
+                <option value="home">装修 / 家居 / 汽车服务</option>
+                <option value="other">其他本地服务</option>
+              </select>
+            </label>
+            <label>这段聊天来自哪里
+              <select id="consultationChannel">
+                <option value="web">Web · 当前体验入口</option>
+                <option value="wecom">企业微信 · 待接接口</option>
+                <option value="feishu">飞书 · 待接接口</option>
+                <option value="dingtalk">钉钉 · 待接接口</option>
+                <option value="workbuddy">WorkBuddy · 待接接口</option>
+                <option value="douyin">抖音 · 待接接口</option>
+              </select>
+            </label>
+            <p class="fine-print" id="consultationChannelStatus">Web 当前只用于体验输入；任何渠道都不会在本页自动外发。</p>
+            <label>客户消息 / 完整聊天记录
+              <textarea id="consultationConversation" rows="9" placeholder="例如：第一次来，想问下你们这个项目多少钱？周六下午有时间吗？"></textarea>
+            </label>
+            <label>本次可确认的商家事实（可选）
+              <textarea id="consultationBusinessContext" rows="5" placeholder="例如：项目A 398元；周六14:00可预约。没有可靠资料就留空，AI不会自己猜价格或档期。"></textarea>
+            </label>
+            <button class="button primary wide" id="consultationAnalyze" type="button">AI 分析客户咨询</button>
+            <p class="fine-print" id="consultationStatus">尚未分析。</p>
+          </div>
+
+          <div class="panel result-panel">
+            <h3>AI 整理后的客户咨询</h3>
+            <div class="info-box"><b>客户主要想要什么</b><p id="consultationNeed">等待分析。</p></div>
+            <div class="info-box"><b>已经确认的信息</b><div id="consultationKnown">等待分析。</div></div>
+            <div class="info-box"><b>还缺哪些客户信息</b><div id="consultationMissingCustomer">等待分析。</div></div>
+            <div class="info-box warning"><b>还缺哪些商家事实</b><div id="consultationMissingBusiness">等待分析。</div></div>
+            <div class="info-box"><b>客户阶段</b><p id="consultationStage">等待分析。</p></div>
+            <div class="info-box warning consultation-risk" id="consultationRisk" hidden><b>需要人工 / 专业人员接手</b><p>等待分析。</p></div>
+            <label>完整回复答案（可直接修改）
+              <textarea id="consultationReply" class="consultation-reply" placeholder="AI 完整回复会显示在这里。"></textarea>
+            </label>
+            <div class="info-box"><b>下一步跟进任务</b><p id="consultationTask">等待分析。</p></div>
+            <div class="consultation-actions">
+              <button class="button secondary" id="consultationEdit" type="button" disabled>编辑答案</button>
+              <button class="button secondary" id="consultationRegenerate" type="button" disabled>重新生成</button>
+              <button class="button secondary" id="consultationHold" type="button" disabled>暂不回复</button>
+              <button class="button primary" id="consultationApprove" type="button" disabled>确认采用</button>
+            </div>
+            <p id="consultationDecision" class="fine-print">AI 只生成答案，当前没有执行任何发送动作。</p>
+            <p id="consultationTrace" class="fine-print">调用信息将在分析后显示。</p>
+            <div class="deployment-note"><b>当前实现：</b>🧠 DeepSeek 负责理解语言与生成完整回复；⚙️ 程序负责结构校验、缺失事实和风险兜底；💬 渠道 Adapter 接口已保留，企业微信 / 飞书 / 钉钉 / WorkBuddy / 抖音当前均为待接接口；👤 操作人员拥有最终发送决定权。</div>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 
   <script type="module" src="/experience/trace.js"></script>
   <script type="module" src="/experience/app.js"></script>
   <script type="module" src="/experience/v7.js"></script>
+  <script type="module" src="/experience/consultation.js"></script>
 </body>
 </html>
