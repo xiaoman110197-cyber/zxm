@@ -4,10 +4,13 @@ import { readFile } from 'node:fs/promises';
 
 const html = await readFile(new URL('../../public/experience/index.html', import.meta.url), 'utf8');
 const js = await readFile(new URL('../../public/experience/app.js', import.meta.url), 'utf8');
+const v7 = await readFile(new URL('../../public/experience/v7.js', import.meta.url), 'utf8');
+const browserJs = `${js}\n${v7}`;
 const css = await readFile(new URL('../../public/experience/styles.css', import.meta.url), 'utf8');
 
-test('experience browser bundle parses as JavaScript', () => {
+test('experience browser bundles parse as JavaScript', () => {
   assert.doesNotThrow(() => new Function(js));
+  assert.doesNotThrow(() => new Function(v7));
 });
 
 test('experience is a separate standalone page', () => {
@@ -61,20 +64,20 @@ test('ambiguous spreadsheet fields require an explicit AI mapping request and ow
 });
 
 test('V7 real-data boss query uses AI for arbitrary questions and keeps follow-up history', () => {
-  assert.match(js, /async function askBossQuestion/);
-  assert.match(js, /\/api\/experience-question/);
-  assert.match(js, /bossConversation/);
-  assert.match(js, /history/);
-  assert.match(js, /AI.*分析|正在分析/);
-  assert.match(js, /evidence/);
+  assert.match(browserJs, /async function askBossQuestion/);
+  assert.match(browserJs, /\/api\/experience-question/);
+  assert.match(browserJs, /bossConversation/);
+  assert.match(browserJs, /history/);
+  assert.match(browserJs, /AI.*分析|正在分析/);
+  assert.match(browserJs, /evidence/);
   assert.match(html, /老板收到的回答/);
-  assert.match(html + js, /bossHistory/);
+  assert.match(html + browserJs, /bossHistory/);
 });
 
 test('V7 keeps a deterministic fallback when the model is unavailable instead of hiding the failure', () => {
-  assert.match(js, /AI.*暂时不可用|大模型.*暂时不可用/);
-  assert.match(js, /realBossAnswer/);
-  assert.match(js, /catch/);
+  assert.match(browserJs, /AI.*暂时不可用|大模型.*暂时不可用/);
+  assert.match(browserJs, /fallbackRealAnswer|realBossAnswer/);
+  assert.match(browserJs, /catch/);
 });
 
 test('experience makes demo and deployment requirements explicit', () => {
