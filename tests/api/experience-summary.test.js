@@ -37,7 +37,10 @@ test('AI mapping request sends schema profile without raw customer values and do
     file:{ name:'乱表.csv', contentBase64:Buffer.from('x').toString('base64') },
     requestFieldMapping:true
   } }, res, {
+    requestId:'trace-request-001',
     parseBusinessDocument:async () => ({ workbook:ambiguousWorkbook() }),
+    fieldMapperProvider:'DeepSeek',
+    fieldMapperModel:'deepseek-v4-flash',
     fieldMapper:async (profile) => {
       receivedProfile = profile;
       return { mappings:[
@@ -49,6 +52,13 @@ test('AI mapping request sends schema profile without raw customer values and do
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.summary.ok, false);
   assert.equal(res.body.mappingSuggestions.length, 2);
+  assert.deepEqual(res.body.aiMappingTrace, {
+    provider:'DeepSeek',
+    model:'deepseek-v4-flash',
+    callStatus:'success',
+    requestId:'trace-request-001',
+    mappingCount:2
+  });
   const sent = JSON.stringify(receivedProfile);
   assert.equal(sent.includes('张三'), false);
   assert.equal(sent.includes('13800000000'), false);
