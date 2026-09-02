@@ -3,9 +3,12 @@ import { createDeepSeekProvider } from '../src/ai/providers.js';
 import { parseBusinessDocument } from '../src/documents/parse.js';
 import { decodeBase64Strict } from '../src/http/base64.js';
 import { buildFieldMappingInput, sanitizeMappingSuggestions } from '../src/experience/field-mapper.js';
-import { summarizeWorkbook } from '../src/experience/summary.js';
+import { summarizeWorkbook, buildBusinessQuestionContext } from '../src/experience/summary.js';
 
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
+const MAX_QUESTION_CHARS = 600;
+const MAX_HISTORY_TURNS = 8;
+const MAX_HISTORY_CHARS = 900;
 
 function extensionOf(name=''){
   const lower = String(name).toLowerCase();
@@ -19,6 +22,64 @@ function runtimeFieldMapper(deps){
   if (!apiKey) return null;
   const provider = createDeepSeekProvider({ apiKey, timeoutMs:10000, maxOutputTokens:1200 });
   return (input) => provider.mapExperienceFields(input);
+}
+
+function runtimeQuestionProvider(deps){
+  if (deps.provider?.answerExperienceQuestion) return deps.provider;
+  const apiKey = String(process.env.DEEPSEEK_API_KEY || '').trim();
+  if (!apiKey) return null;
+  return createDeepSeekProvider({ apiKey, timeoutMs:12000, maxOutputTokens:1500 });
+}
+
+function clip(value, max=600){
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function cleanHistory(history){
+  if (!Array.isArray(history)) return [];
+  return history.slice(-MAX_HISTORY_TURNS).map((item) => {
+    const role = item?.role === 'assistant' ? 'assistant' : 'owner';
+    const text = clip(item?.text, MAX_HISTORY_CHARS);
+    return text ? { role, text } : null;
+  }).filter(Boolean);
+}
+
+function unsupportedProfitAmount(text){
+  return /(利润|毛利)[^\n]{0,28}[¥￥]?\s*\d[\d,]*(?:\.\d+)?/i.test(String(text || ''));
+}
+
+function safeAnswer(raw, context){
+  const source = raw && typeof raw === 'object' ? raw : {};
+  let overview = clip(source.overview, 900) || '当前数据可以支持部分经营判断。';
+  let profit = clip(source.profit, 700) || '暂时无法判断利润。';
+  let actions = Array.isArray(source.actions) ? source.actions.slice(0,3).map((item) => clip(item, 260)).filter(Boolean) : [];
+  const limits = Array.isArray(source.limits) ? source.limits.slice(0,6).map((item) => clip(item, 260)).filter(Boolean) : [];
+
+  if (!context.availability?.profit) {
+    profit = '暂时无法判断利润：当前营业额不能等同利润；还需要成本、毛利率或明确的利润字段。';
+    if (unsupportedProfitAmount(overview)) overview = '现有经营指标可以继续判断业务量、营业额和效率问题；利润暂时无法判断，因为缺少成本或毛利证据。';
+    actions = actions.filter((item) => !unsupportedProfitAmount(item));
+    if (!limits.some((item) => /利润|毛利|成本/.test(item))) limits.push('缺少成本、毛利率或利润字段，不能判断利润金额。');
+  }
+
+  return {
+    overview,
+    cost:clip(source.cost, 700) || '当前数据不足以补充更多降本判断。',
+    efficiency:clip(source.efficiency, 700) || '当前数据不足以补充更多效率判断。',
+    profit,
+    actions,
+    limits
+  };
+}
+
+function evidenceFromContext(context){
+  const evidence = [];
+  if (context.source?.fileName) evidence.push(`来源：${context.source.fileName}`);
+  if (context.source?.usedSheet) evidence.push(`主明细表：${context.source.usedSheet}`);
+  if (context.period) evidence.push(`统计范围：${context.period === 'all' ? '整份主明细表' : context.period}`);
+  if (context.facts?.records !== null && context.facts?.records !== undefined) evidence.push(`业务记录：${context.facts.records}`);
+  if (context.fieldCoverage !== null && context.fieldCoverage !== undefined) evidence.push(`数据完整度：${context.fieldCoverage}%`);
+  return evidence.slice(0,6);
 }
 
 export async function handleExperienceSummaryRequest(req, res, deps={}){
@@ -73,6 +134,51 @@ export async function handleExperienceSummaryRequest(req, res, deps={}){
     });
   } catch {
     return res.status(422).json({ error:'表格无法解析，请检查文件格式或内容', requestId });
+  }
+}
+
+export async function handleExperienceQuestionRequest(req, res, deps={}){
+  const requestId = deps.requestId || randomUUID();
+  if (req.method !== 'POST') return res.status(405).json({ error:'只支持 POST', requestId });
+  const question = clip(req.body?.question, MAX_QUESTION_CHARS);
+  if (!question) return res.status(400).json({ error:'请输入老板的问题', requestId });
+  const summary = req.body?.summary;
+  if (!summary || typeof summary !== 'object') return res.status(400).json({ error:'缺少经营汇总数据', requestId });
+
+  const context = buildBusinessQuestionContext(summary, { source:req.body?.source || {} });
+  const evidence = evidenceFromContext(context);
+  if (!context.available) {
+    return res.status(200).json({
+      requestId,
+      modelUsed:false,
+      answer:{
+        overview:`当前数据还不足以可靠回答这个问题：${context.reason || '经营汇总不完整'}。`,
+        cost:'可以先补齐关键字段，再判断具体降本空间。',
+        efficiency:'现有数据不足以形成可靠效率判断。',
+        profit:'暂时无法判断利润：缺少可靠经营汇总以及成本/毛利证据。',
+        actions:['先补齐页面提示的关键字段'],
+        limits:context.missing || []
+      },
+      evidence
+    });
+  }
+
+  const provider = runtimeQuestionProvider(deps);
+  if (!provider) return res.status(503).json({ error:'AI经营问答暂时不可用，程序汇总仍可继续使用。', requestId, evidence });
+
+  try {
+    const history = cleanHistory(req.body?.history);
+    const raw = await provider.answerExperienceQuestion({ question, context, history });
+    const answer = safeAnswer(raw, context);
+    return res.status(200).json({
+      requestId,
+      modelUsed:true,
+      model:provider.model || provider.name || 'AI',
+      answer,
+      evidence
+    });
+  } catch {
+    return res.status(503).json({ error:'AI经营问答暂时不可用，程序汇总仍可继续使用。', requestId, evidence });
   }
 }
 
