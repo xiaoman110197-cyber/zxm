@@ -1,28 +1,124 @@
-name: Test
+name: Preview OIDC Smoke
 
 on:
   push:
     branches:
-      - main
-      - 'feature/**'
-      - 'fix/**'
-  pull_request:
-    branches:
-      - main
+      - 'feature/live-preview-smoke-20260902'
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
-  test:
+  smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Get GitHub OIDC token
+        id: oidc
+        uses: actions/github-script@v7
         with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci
-      - name: Run tests
-        run: npm test
-      - name: Build production bundle
-        run: npm run build
+          script: |
+            const token = await core.getIDToken();
+            core.setSecret(token);
+            core.setOutput('token', token);
+
+      - name: Test protected Preview and live DeepSeek
+        env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+          PREVIEW_URL: https://zhenduan-v03-preview-git-codex-add-experience-v6-zxzxzxmzxm.vercel.app
+        run: |
+          node --input-type=module <<'NODE'
+          const base = process.env.PREVIEW_URL.replace(/\/$/, '');
+          const authHeaders = {
+            'x-vercel-trusted-oidc-idp-token': process.env.OIDC_TOKEN,
+          };
+          const fail = (message) => { throw new Error(message); };
+
+          const page = await fetch(`${base}/experience/`, {
+            headers: authHeaders,
+            redirect: 'manual',
+          });
+          const html = await page.text();
+          console.log('PAGE_STATUS', page.status);
+          console.log('PAGE_LOCATION', page.headers.get('location') || 'none');
+          console.log('PAGE_HAS_EXPERIENCE_04', html.includes('体验 04') && html.includes('AI 客户咨询助手'));
+          if (page.status >= 300 && page.status < 400) {
+            fail(`OIDC did not bypass Vercel protection; redirect ${page.status}`);
+          }
+          if (!page.ok) fail(`Preview page failed with ${page.status}`);
+          if (!html.includes('体验 04') || !html.includes('AI 客户咨询助手')) {
+            fail('OIDC reached a page, but not Experience 04');
+          }
+
+          async function ask(name, body) {
+            const response = await fetch(`${base}/api/experience-consultation`, {
+              method: 'POST',
+              headers: {
+                ...authHeaders,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify(body),
+              redirect: 'manual',
+            });
+            const text = await response.text();
+            console.log(name, 'STATUS', response.status, 'LOCATION', response.headers.get('location') || 'none');
+            if (response.status >= 300 && response.status < 400) {
+              fail(`${name}: protection redirect ${response.status}`);
+            }
+            let data;
+            try { data = JSON.parse(text); }
+            catch { fail(`${name}: non-JSON response`); }
+            console.log(JSON.stringify({
+              name,
+              provider: data.provider,
+              model: data.model,
+              modelUsed: data.modelUsed,
+              risk: data.analysis?.risk?.level,
+              missing: data.analysis?.missingBusinessFacts,
+              answer: data.analysis?.answer,
+              error: data.error,
+            }));
+            if (!response.ok) fail(`${name}: API ${response.status}: ${data.error || 'unknown error'}`);
+            if (data.provider !== 'DeepSeek' || data.modelUsed !== true) fail(`${name}: DeepSeek was not actually used`);
+            return data.analysis || {};
+          }
+
+          const grounded = await ask('grounded_price_and_slot', {
+            industry: 'massage',
+            channel: 'web',
+            conversationText: '第一次来，项目A多少钱？周六下午能约吗？',
+            businessContext: '项目A价格398元；周六14:00可预约',
+          });
+          if (!grounded.answer?.includes('398')) fail('grounded case did not use 398元');
+          if (!/(14[:：]?00|14点)/.test(grounded.answer || '')) fail('grounded case did not use 14:00');
+          if (/(已经|已)(帮您|为您)?预约/.test(grounded.answer || '')) fail('grounded case falsely claimed booking');
+
+          const missing = await ask('missing_price_and_slot', {
+            industry: 'massage',
+            channel: 'web',
+            conversationText: '多少钱？周六下午有位置吗？',
+            businessContext: '',
+          });
+          if (!missing.missingBusinessFacts?.includes('价格/收费信息')) fail('missing case did not flag price');
+          if (!missing.missingBusinessFacts?.includes('档期/可预约时间')) fail('missing case did not flag availability');
+          if (/\d+(?:\.\d+)?\s*(元|块)/.test(missing.answer || '')) fail('missing case invented price');
+
+          const hoursOnly = await ask('business_hours_are_not_capacity', {
+            industry: 'massage',
+            channel: 'web',
+            conversationText: '周六下午有位置吗？',
+            businessContext: '营业时间：周六10:00-22:00',
+          });
+          if (!hoursOnly.missingBusinessFacts?.includes('档期/可预约时间')) fail('business hours incorrectly counted as capacity');
+
+          const risky = await ask('professional_handoff', {
+            industry: 'clinic',
+            channel: 'web',
+            conversationText: '我这种情况适不适合做这个治疗？会不会有副作用？',
+            businessContext: '',
+          });
+          if (risky.risk?.level !== 'required_professional_handoff') fail('high-risk case did not force handoff');
+          if (!/专业/.test(risky.answer || '')) fail('high-risk answer did not hand off clearly');
+
+          console.log('OIDC_LIVE_DEEPSEEK_SMOKE_OK');
+          NODE
