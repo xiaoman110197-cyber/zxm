@@ -17,11 +17,21 @@ function extensionOf(name=''){
 }
 
 function runtimeFieldMapper(deps){
-  if (typeof deps.fieldMapper === 'function') return deps.fieldMapper;
+  if (typeof deps.fieldMapper === 'function') {
+    return {
+      map:deps.fieldMapper,
+      provider:deps.fieldMapperProvider || 'AI',
+      model:deps.fieldMapperModel || 'unknown'
+    };
+  }
   const apiKey = String(process.env.DEEPSEEK_API_KEY || '').trim();
   if (!apiKey) return null;
   const provider = createDeepSeekProvider({ apiKey, timeoutMs:10000, maxOutputTokens:1200 });
-  return (input) => provider.mapExperienceFields(input);
+  return {
+    map:(input) => provider.mapExperienceFields(input),
+    provider:provider.name === 'deepseek' ? 'DeepSeek' : (provider.name || 'AI'),
+    model:provider.model || 'unknown'
+  };
 }
 
 function runtimeQuestionProvider(deps){
@@ -104,22 +114,44 @@ export async function handleExperienceSummaryRequest(req, res, deps={}){
     let mappingSuggestions = [];
     let mappingStatus = confirmedMappings.length ? 'confirmed' : 'not_requested';
     let mappingError = null;
+    let aiMappingTrace = null;
 
     if (req.body?.requestFieldMapping === true && !confirmedMappings.length) {
       const mapper = runtimeFieldMapper(deps);
       if (!mapper) {
         mappingStatus = 'unavailable';
         mappingError = 'AI字段识别暂不可用；现有确定性汇总仍可继续使用。';
+        aiMappingTrace = {
+          provider:'DeepSeek',
+          model:process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
+          callStatus:'unavailable',
+          requestId,
+          mappingCount:0
+        };
       } else {
         try {
           const input = buildFieldMappingInput(parsed.workbook);
-          const raw = await mapper(input);
+          const raw = await mapper.map(input);
           mappingSuggestions = sanitizeMappingSuggestions(raw, parsed.workbook);
           mappingStatus = mappingSuggestions.length ? 'needs_confirmation' : 'no_suggestions';
+          aiMappingTrace = {
+            provider:mapper.provider,
+            model:mapper.model,
+            callStatus:'success',
+            requestId,
+            mappingCount:mappingSuggestions.length
+          };
           if (!mappingSuggestions.length) mappingError = 'AI没有找到足够明确的字段映射，建议人工确认列含义。';
         } catch {
           mappingStatus = 'failed';
           mappingError = 'AI字段识别失败；不会影响现有确定性汇总，请稍后重试。';
+          aiMappingTrace = {
+            provider:mapper.provider,
+            model:mapper.model,
+            callStatus:'failed',
+            requestId,
+            mappingCount:0
+          };
         }
       }
     }
@@ -130,6 +162,7 @@ export async function handleExperienceSummaryRequest(req, res, deps={}){
       summary,
       mappingStatus,
       mappingSuggestions,
+      ...(aiMappingTrace ? { aiMappingTrace } : {}),
       ...(mappingError ? { mappingError } : {})
     });
   } catch {
