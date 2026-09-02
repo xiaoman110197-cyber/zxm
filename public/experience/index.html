@@ -159,7 +159,7 @@
               <article><span>营业额</span><b id="realRevenue">—</b><p>基于金额字段</p></article>
               <article><span>逾期任务</span><b id="realOverdue">—</b><p>需要截止时间字段</p></article>
             </div>
-            <div class="deployment-note"><b>当前实现：</b>⚙️ 程序读取 + 确定性计算。表头特别混乱、字段语义不清时，下一阶段再加 🧠 大模型字段映射，不在本版里猜。</div>
+            <div class="deployment-note"><b>当前实现：</b>⚙️ 程序读取 + 确定性计算；普通表头直接识别，命名模糊时可主动调用 🧠 大模型给字段映射建议，必须人工确认后才重新计算。</div>
           </div>
         </div>
       </div>
@@ -167,9 +167,9 @@
 
     <section class="section alt" id="boss">
       <div class="wrap">
-        <span class="eyebrow">体验 03</span>
+        <span class="eyebrow">体验 03 · V7</span>
         <h2>老板直接问：“今天怎样？”</h2>
-        <p class="lead">未上传表格时使用虚构演示数据；上传后优先基于真实聚合指标回答。数据缺失时继续分析已知部分，并明确告诉你还缺什么。</p>
+        <p class="lead">未上传表格时使用虚构演示数据；上传后可以任意自然语言追问。数字和比例由程序计算，大模型只负责理解问题和把结果说成人话；数据缺失时明确告诉你还缺什么。</p>
         <div class="two-col">
           <div class="panel">
             <div class="info-box"><b>当前数据模式</b><p id="bossDataMode">演示数据</p></div>
@@ -183,7 +183,7 @@
               <button type="button" data-question="谁还有客户没跟进？">谁还有客户没跟进？</button>
             </div>
             <label>老板的问题
-              <input id="bossQuestion" value="今天怎样？">
+              <input id="bossQuestion" value="今天怎样？" placeholder="例如：为什么营业额还可以，但你不判断利润好？">
             </label>
             <button class="button primary wide" id="bossAsk" type="button">查询经营情况</button>
           </div>
@@ -191,7 +191,7 @@
             <h3>老板收到的回答</h3>
             <div id="bossAnswer" class="answer">点击“查询经营情况”后显示。</div>
             <p id="bossSource" class="fine-print">数据来源：虚构演示数据。</p>
-            <div class="deployment-note"><b>正式部署需要：</b>当前真实表格模式已接 📊 Excel/CSV + ⚙️ 指标计算；要支持任意自然语言和自动抓 POS/CRM/预约系统，再接 🧠 大模型 + 🔌 连接器 + 💬 WorkBuddy / 企业微信 / 飞书 / 钉钉等入口。</div>
+            <div class="deployment-note"><b>当前真实数据模式已接：</b>📊 Excel/CSV + ⚙️ 指标计算 + 🧠 大模型自然语言问答。自动抓 POS/CRM/预约系统和在 WorkBuddy / 企业微信 / 飞书 / 钉钉里直接问，属于后续连接器部署。</div>
           </div>
         </div>
       </div>
@@ -199,5 +199,6 @@
   </main>
 
   <script type="module" src="/experience/app.js"></script>
+  <script type="module" src="/experience/v7.js"></script>
 </body>
 </html>
