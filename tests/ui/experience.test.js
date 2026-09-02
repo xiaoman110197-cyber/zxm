@@ -60,12 +60,21 @@ test('ambiguous spreadsheet fields require an explicit AI mapping request and ow
   assert.match(js, /confirmedMappings/);
 });
 
-test('boss today query produces a browser result instead of a dead button', () => {
-  assert.match(js, /function bossAnswer/);
-  assert.match(js, /bossAsk/);
-  assert.match(js, /addEventListener\(['"]click['"],\s*bossAnswer/);
-  assert.match(js, /bossAnswer.*textContent/s);
+test('V7 real-data boss query uses AI for arbitrary questions and keeps follow-up history', () => {
+  assert.match(js, /async function askBossQuestion/);
+  assert.match(js, /\/api\/experience-question/);
+  assert.match(js, /bossConversation/);
+  assert.match(js, /history/);
+  assert.match(js, /AI.*分析|正在分析/);
+  assert.match(js, /evidence/);
   assert.match(html, /老板收到的回答/);
+  assert.match(html, /id="bossHistory"/);
+});
+
+test('V7 keeps a deterministic fallback when the model is unavailable instead of hiding the failure', () => {
+  assert.match(js, /AI.*暂时不可用|大模型.*暂时不可用/);
+  assert.match(js, /realBossAnswer/);
+  assert.match(js, /catch/);
 });
 
 test('experience makes demo and deployment requirements explicit', () => {
