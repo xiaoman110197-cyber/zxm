@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const html = await readFile(new URL('../../public/experience/index.html', import.meta.url), 'utf8');
+const trace = await readFile(new URL('../../public/experience/trace.js', import.meta.url), 'utf8');
 const js = await readFile(new URL('../../public/experience/app.js', import.meta.url), 'utf8');
 const v7 = await readFile(new URL('../../public/experience/v7.js', import.meta.url), 'utf8');
-const browserJs = `${js}\n${v7}`;
+const browserJs = `${trace}\n${js}\n${v7}`;
 const css = await readFile(new URL('../../public/experience/styles.css', import.meta.url), 'utf8');
 
 test('experience browser bundles parse as JavaScript', () => {
+  assert.doesNotThrow(() => new Function(trace));
   assert.doesNotThrow(() => new Function(js));
   assert.doesNotThrow(() => new Function(v7));
 });
@@ -64,15 +66,17 @@ test('ambiguous spreadsheet fields require an explicit AI mapping request and ow
 });
 
 test('AI field mapping visibly shows provider model status request id and returned mappings', () => {
-  assert.match(js, /fieldMappingTrace/);
-  assert.match(js, /renderMappingTrace/);
-  assert.match(js, /aiMappingTrace/);
-  assert.match(js, /供应商/);
-  assert.match(js, /模型/);
-  assert.match(js, /调用状态/);
-  assert.match(js, /请求ID/);
-  assert.match(js, /DeepSeek/);
-  assert.match(js, /mappingCount|映射/);
+  assert.match(html, /\/experience\/trace\.js/);
+  assert.match(trace, /fieldMappingTrace/);
+  assert.match(trace, /renderMappingTrace/);
+  assert.match(trace, /aiMappingTrace/);
+  assert.match(trace, /供应商/);
+  assert.match(trace, /模型/);
+  assert.match(trace, /调用状态/);
+  assert.match(trace, /请求ID/);
+  assert.match(trace, /DeepSeek/);
+  assert.match(trace, /mappingCount|映射/);
+  assert.match(trace, /不是 DeepSeek 官方 request ID/);
 });
 
 test('V7 real-data boss query uses AI for arbitrary questions and keeps follow-up history', () => {
